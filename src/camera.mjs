@@ -21,3 +21,9 @@ export function billboard([x,y,z],yaw,width,height,pivot=[.5,1]){
   const at=(u,v)=>[x+right[0]*u,y+right[1]*u,z+v];
   return [at(left,top),at(left+width,top),at(left+width,top-height),at(left,top-height)];
 }
+
+// Conservative screen-space bounds; caller supplies padding for upright art.
+export function visibleTriangle(face,view,width,height,padding=0){
+  const p=face.points.map(view);
+  return Math.max(...p.map(v=>v.x))>=-padding&&Math.min(...p.map(v=>v.x))<=width+padding&&Math.max(...p.map(v=>v.y))>=-padding&&Math.min(...p.map(v=>v.y))<=height+padding;
+}

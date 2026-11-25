@@ -1,0 +1,31 @@
+{
+  "schema": "smi-hex-style/1",
+  "id": "fantasy-meadow-fixture",
+  "manifest": "./examples/meadow-art/manifest.json",
+  "detail": {
+    "top": "smi.hex.detail.meadow",
+    "side": "smi.hex.detail.earth",
+    "repeat_ft": 5,
+    "strength": 0.6
+  },
+  "lighting": {
+    "ambient": 0.57,
+    "direction": [
+      -0.45,
+      -0.35,
+      0.82
+    ]
+  },
+  "vegetation": {
+    "assets": {
+      "meadow-01": "smi.hex.grass.01",
+      "meadow-02": "smi.hex.grass.02",
+      "meadow-03": "smi.hex.grass.03"
+    },
+    "samples_per_triangle": 3,
+    "min_height_ft": 0.45,
+    "max_height_ft": 1.7,
+    "near_px_per_ft": 18,
+    "far_px_per_ft": 8
+  }
+}

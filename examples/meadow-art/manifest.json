@@ -1,0 +1,84 @@
+{
+  "schema": "smi-visual-pack/1",
+  "pack_id": "smi.hex.meadow.fixture",
+  "version": "1.0.0",
+  "description": "Original procedural art contract test fixture",
+  "license": "CC0-1.0",
+  "textures": {
+    "sheet": {
+      "path": "textures/meadow.png",
+      "width_px": 192,
+      "height_px": 128,
+      "alpha": "straight"
+    }
+  },
+  "assets": [
+    {
+      "id": "smi.hex.detail.meadow",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        0,
+        0,
+        64,
+        64
+      ]
+    },
+    {
+      "id": "smi.hex.detail.earth",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        64,
+        0,
+        64,
+        64
+      ]
+    },
+    {
+      "id": "smi.hex.grass.01",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        0,
+        64,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "smi.hex.grass.02",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "smi.hex.grass.03",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        128,
+        64,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ]
+    }
+  ]
+}

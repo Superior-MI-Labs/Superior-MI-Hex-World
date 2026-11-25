@@ -38,18 +38,20 @@ export function httpProvider(fetcher=fetch){
     const text=await r.text();assert(text.length<=5e6,"Manifest exceeds size limit");return JSON.parse(text);
   }};
 }
-export async function createAtlasRaster({manifest,asset,state=null,regionOnly=false},registry=new AssetRegistry()) {
+export async function openAtlasPack(manifest,registry=new AssetRegistry()) {
   const url=new URL(manifest,location.href);
   // Default provider is only installed on this private registry.
   registry.register("http",httpProvider());
-  const pack=await registry.load("http",url.href),map=validateSpritePack(pack,asset);
-  if(regionOnly)assert(map.get(asset).kind==="region","Transition mask must reference a static Atlas region");
+  const pack=await registry.load("http",url.href);
   const images=new Map();
   async function getImage(key){
     if(images.has(key))return images.get(key);
     const t=pack.textures[key],target=new URL(t.path,url);assert(target.origin===url.origin&&target.href.startsWith(new URL(".",url).href),"Texture escapes pack directory");
     const p=new Promise((resolve,reject)=>{const i=new Image();i.crossOrigin="anonymous";i.onload=()=>{try{assert(i.naturalWidth===t.width_px&&i.naturalHeight===t.height_px,"Texture dimensions mismatch");resolve(i);}catch(e){reject(e);}};i.onerror=()=>reject(Error("Texture unavailable: "+key));i.src=target.href;});images.set(key,p);return p;
   }
+  return {createRaster({asset,state=null,regionOnly=false}){
+  const map=validateSpritePack(pack,asset);
+  if(regionOnly)assert(map.get(asset).kind==="region","Static texture must reference an Atlas region");
   const renderer=globalThis.VisualAtlasRenderer.create({getAsset:id=>map.get(id),getImage,slots:globalThis.VisualAtlasSlots,timeline:globalThis.VisualAtlasTimeline,visualCore:globalThis.VisualAtlasVisualCore});
   const [w,h]=renderer.sizeFor(asset),canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
   let revision=0,busy=false,last=-Infinity,pivot=[.5,1];
@@ -58,7 +60,9 @@ export async function createAtlasRaster({manifest,asset,state=null,regionOnly=fa
       if(busy||time-last<80)return false;busy=true;
       try{ctx.clearRect(0,0,w,h);await renderer.drawAsset(asset,ctx,0,0,w,h,time,{},state);pivot=renderer.pivotFor(asset,time,state)??[.5,1];const out=canvas.getContext("2d");out.clearRect(0,0,w,h);out.drawImage(back,0,0);revision++;last=time;return true;}finally{busy=false;}
     }};
+  }};
 }
+export async function createAtlasRaster({manifest,...binding},registry){return (await openAtlasPack(manifest,registry)).createRaster(binding);}
 
 export async function createAtlasSprite({height_ft=4,...binding},registry){
   if(!Number.isFinite(height_ft)||height_ft<=0)throw Error("Invalid sprite height");

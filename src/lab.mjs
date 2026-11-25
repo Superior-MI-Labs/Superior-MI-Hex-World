@@ -3,9 +3,10 @@ import {vertices,uniformShape,sampleSurface,hasVolume} from "./geometry.mjs";
 import {editVertex,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle} from "./editor.mjs";
-import {project,pickFace,billboard} from "./camera.mjs";
+import {project,pickFace,billboard,visibleTriangle} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
+import {loadStyle,vegetationSamples} from "./art-style.mjs";
 import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
@@ -14,7 +15,7 @@ const catalog=validateMaterials(await fetch("./examples/materials.json").then(r=
 let world,grid,clock=new Clock(base.simulation),yaw=0,flame=null,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24,panX=0,panY=50,meshCache;
 const ground=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
 const domain=ground.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
-let actor=null,actorAddress=[0,0,0],spriteRequest=0;
+let actor=null,actorAddress=[0,0,0],spriteRequest=0,art=null;
 // Temporary transparent vertical artwork, not an Atlas release.
 const tufts=new Map(catalog.vegetation.variants.map(v=>{
   const c=document.createElement("canvas");c.width=c.height=64;const g=c.getContext("2d");
@@ -66,6 +67,11 @@ function simulate(seconds){if(seconds<=0)return;const edits=[];for(const address
 reset();
 $("level").onchange=()=>{selected=[selected[0],selected[1],Number($("level").value)];sync();};
 loadActor();
+async function loadArt(){
+  try{const response=await fetch("./examples/meadow-style.json");if(!response.ok)throw Error("Style unavailable");const next=await loadStyle(await response.json());gpu.setTerrainDetail("top",next.top.image);gpu.setTerrainDetail("side",next.side.image);art=next;$("artStatus").textContent="Atlas meadow fixture loaded";}
+  catch(e){$("artStatus").textContent="Procedural fallback: "+e.message;}
+}
+loadArt();
 if(catalog.transitions.mask)createAtlasMask(catalog.transitions.mask).then(image=>{gpu.setTransitionMask(image);$("maskStatus").textContent="Atlas transition mask loaded";}).catch(e=>{$("maskStatus").textContent="Procedural mask fallback: "+e.message;});
 $("transitions").onchange=()=>dirty=true;
 function demoSurface(kind){
@@ -115,14 +121,22 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     const a=actorAddress,s=world.get(...a)?.shape;
     if(s&&hasVolume(s)){const o=physicalPosition(...a,grid),z=sampleSurface(s,grid,0,0);sprite={image:actor.image,revision:actor.revision,points:billboard([o.x,o.y,o.z+z],yaw,actor.width,actor.height,actor.pivot)};}
   }
-  const sprites=[];
-  if($("vegetation").checked)for(const f of faces){
-    if(f.kind!=="top"||f.vegetation<=0||stableUnit(world.config.id,f.address,"tuft"+f.triangle)>f.vegetation)continue;
-    const p=[0,1,2].map(i=>f.points.reduce((s,v)=>s+v[i]/3,0)),h=.55+f.vegetation*1.1;
-    sprites.push({image:tufts.get(f.variant),revision:0,points:billboard(p,yaw,h*.9,h)});
+  const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked;
+  const visible=faces.filter(f=>visibleTriangle(f,view,canvas.width,canvas.height,scale*5));
+  if($("vegetation").checked)for(const f of visible){
+    if(f.kind!=="top"||f.vegetation<=0)continue;
+    if(styled){
+      for(const sample of vegetationSamples(f,seed,art.profile,scale)){
+        const r=art.vegetation.get(sample.variant);if(!r)continue;
+        sprites.push({image:r.image,revision:r.revision,points:billboard(sample.point,yaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot)});
+      }
+    }else if(stableUnit(seed,f.address,"tuft"+f.triangle)<=f.vegetation){
+      const p=[0,1,2].map(i=>f.points.reduce((sum,v)=>sum+v[i]/3,0)),h=.55+f.vegetation*1.1;
+      sprites.push({image:tufts.get(f.variant),revision:0,points:billboard(p,yaw,h*.9,h)});
+    }
   }
   if(sprite)sprites.push(sprite);
-  gpu.render(faces,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked});
+  gpu.render(visible,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null});
   if($("wire").checked){
     for(const a of domain){if(a[2]!==selected[2]||hasVolume(world.get(...a).shape))continue;polygon(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)),null,"#344b56");}
 
@@ -144,6 +158,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),mesh_triangles:faces.length,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:flame?.instance.behavior??"none",active:!!flame&&effectActive(flame.instance,clock.simulation)},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:flame?.instance.behavior??"none",active:!!flame&&effectActive(flame.instance,clock.simulation)},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

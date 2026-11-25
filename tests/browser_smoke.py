@@ -40,6 +40,12 @@ with sync_playwright() as p:
     assert coverage["snow"][0]>220 and coverage["snow"][2]>235,coverage
     assert coverage["grass"][1]>240 and coverage["grass"][0]<10,coverage
     assert coverage["rim"][0][1]>200 and coverage["rim"][1][1]<10,coverage
+    page.wait_for_function("document.querySelector('#artStatus').textContent === 'Atlas meadow fixture loaded'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style === 'fantasy-meadow-fixture'")
+    page.locator("#artStyle").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style === null")
+    page.locator("#artStyle").check()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style === 'fantasy-meadow-fixture'")
     page.wait_for_function("document.querySelector('#maskStatus').textContent === 'Atlas transition mask loaded'")
     page.locator("#transitionDemo").select_option("snow")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).transition_triangles > 0")

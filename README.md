@@ -7,3 +7,6 @@ First foundation: signed axial Q/R plus vertical Z, configurable physical scale 
 Run `node --test tests/*.test.mjs` (Node 20+). Serve the root with `python3 -m http.server 8000` and open localhost:8000. See [architecture](docs/ARCHITECTURE.md).
 
 v0.7: neighbor-aware material/coverage transitions, optional Atlas transition mask, cliff-rim bleed, derived mesh cache and camera pan/zoom. Transition previews and coverage debug are in the material controls.
+
+
+v0.8: Atlas terrain style fixture, repeating detail, directional terrain lighting, deterministic vegetation samples, viewport culling and vegetation detail scaling. See [art direction](docs/ART_DIRECTION.md).
