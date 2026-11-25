@@ -1,3 +1,5 @@
+import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
+export {shape} from "./geometry.mjs";
 // Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
 const int = Number.isSafeInteger;
 const positive = n => Number.isFinite(n) && n > 0;
@@ -9,6 +11,7 @@ export function validateWorld(config) {
   requireThat(config?.schema === "smi-hex-world/1" && typeof config.id === "string" && config.id.length > 0,"Invalid world");
   const g=config.grid;
   requireThat(positive(g?.horizontal_ft)&&positive(g?.vertical_ft),"Invalid grid scale");
+  validateSubdivisions(g.geometry_subdivisions);
   requireThat(Array.isArray(g.chunk_size)&&g.chunk_size.length===3&&g.chunk_size.every(n=>int(n)&&n>0&&n<=256),"Invalid chunk dimensions");
   requireThat(["frozen","manual","turn-based","real-time","scaled"].includes(config.simulation?.mode)&&positive(config.simulation?.rate),"Invalid clock configuration");
   return copy(config);
@@ -29,27 +32,23 @@ export function neighbors(q,r,z) {
   addressKey(q,r,z);
   return [...DIRECTIONS.map(([a,b])=>[q+a,r+b,z]),[q,r,z+1],[q,r,z-1]].filter(a=>a.every(int));
 }
-export function shape(value) {
-  requireThat(value && ["empty","full","slab","ramp"].includes(value.kind),"Invalid shape");
-  if(value.kind==="slab") requireThat(positive(value.height)&&value.height<=1,"Invalid slab");
-  if(value.kind==="ramp") requireThat(int(value.direction)&&value.direction>=0&&value.direction<6&&Number.isFinite(value.low)&&Number.isFinite(value.high)&&value.low>=0&&value.low<value.high&&value.high<=1,"Invalid ramp");
-  return copy(value);
-}
-function cell(value) {
+function cell(value, subdivisions) {
   requireThat(typeof value?.material==="string"&&value.material.length>0,"Invalid material");
-  return {...copy(value),shape:shape(value.shape)};
+  const geometry=shape(value.shape,subdivisions);
+  requireThat(value.material!=="air"||geometry.upper.every((h,i)=>h===geometry.lower[i]),"Air cannot contain solid geometry");
+  return {...copy(value),shape:geometry};
 }
 export class World {
   #config; #chunks=new Map();
   constructor(config){this.#config=validateWorld(config);}
   get config(){return copy(this.#config);}
   #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
-  defineChunk(cq,cr,cz,defaultCell={material:"air",shape:{kind:"empty"}}){
+  defineChunk(cq,cr,cz,defaultCell={material:"air",shape:uniformShape(0)}){
     const key=addressKey(cq,cr,cz);requireThat(!this.#chunks.has(key),"Chunk already defined");
-    this.#chunks.set(key,{defaultCell:cell(defaultCell),cells:new Map()});
+    this.#chunks.set(key,{defaultCell:cell(defaultCell,this.#config.grid.geometry_subdivisions),cells:new Map()});
   }
   get(q,r,z){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);return chunk ? copy(chunk.cells.get(local)??chunk.defaultCell):undefined;}
-  set(q,r,z,value){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");chunk.cells.set(local,cell(value));}
+  set(q,r,z,value){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");chunk.cells.set(local,cell(value,this.#config.grid.geometry_subdivisions));}
 }
 export class Clock {
   #mode; #rate; #simulation=0; #visual=0;

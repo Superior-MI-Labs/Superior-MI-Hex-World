@@ -1,10 +1,10 @@
-# Foundation contract (v0.1)
+# Foundation contract (v0.2)
 This independent repository supersedes the height-only Tabletop prototype direction, not its existing implementation. Reference: https://github.com/Superior-MI-Labs/Interactive-Tabletop/blob/agent/hex-world-terrain-elevation-and-world-contract-20261125/HEX_WORLD_CONTRACT.md . Retain axial math and fixed 35.264 degree isometric projection with six yaw directions. Unlike the prototype, all ordinary interiors, caves and buildings share Q/R/Z; portals only for intentionally separate spaces.
 
 ## Authority
 World configuration: smi-hex-world/1. Horizontal nearest-neighbor distance defaults to 5 ft, vertical step defaults to 5 ft, chunk defaults to 16 per axis. Signed integer addresses use floor division. Physical positions are derived, never camera pixels. Immutable grid per world; migration is explicit. A sparse known chunk has a default material and explicit overrides; absence of a chunk means unknown, not air. The demo is in-memory; durable indexed storage, streaming and uniform compression beyond default cells are later. No gameplay bounds, but JS safe-integer arithmetic constrains representable addresses.
 
-Shapes are cell-local normalized occupancy: full, slab with fractional height, ramp with direction and fractional low/high heights. Partial geometry is not a second grid. A cell may contain air plus effects; surface decoration and entity placement will be independent components. Future mesh generation, collision, face visibility, overlapping surfaces and navigation must consume the same geometry definition. Debug rendering is not collision proof.
+Geometry is a fixed triangulated hex fan: six corners counterclockwise from +30 degrees, center last; triangle i is center, i, (i+1)%6. A cell stores one solid interval between two seven-integer arrays, lower and upper, with 0 <= lower[i] <= upper[i] <= grid.geometry_subdivisions. Default subdivisions 2 (0, 2.5, 5 ft); 4 gives quarter steps without changing the five-foot Z address or 80-foot chunk height. Full, slab, ramp, peak and excavation are presets, not separate types. Equal lower/upper means zero volume. Multiple disjoint solid intervals and arbitrary geometry within one cell remain future work. Air must have zero solid volume. v0.1 shape kinds are intentionally replaced before persistent worlds exist; no silent migration. The mesh and surface sampler use the same fan. Edge i neighbors axial offsets [0,1],[-1,1],[-1,0],[0,-1],[1,-1],[1,0]; the opposite edge reverses endpoint order. Matching heights can be welded; differing profiles need exposed-face clipping. v0.2 generates individual closed cell meshes; neighbor face subtraction, cross-cell welding, collision and true depth buffering remain future gates. Debug Canvas lab is an isolated cell inspector, not a scene renderer. A cell may contain air plus effects; surface decoration and entity placement will be independent components.
 
 ## Time
 Host advances simulation explicitly (manual, turn-based, real-time or scaled); frozen ignores advances. Visual animation uses an independent clock, optionally paused by host. Effects: persistent, decorative, timed, reactive. Reactive effects need registered material response rules; no generic automatic fuel/spread in v0.1. Timed effects expire in simulation time, never animation time. Explicit editing remains possible during frozen time. No implicit wall-clock mutation.
@@ -14,7 +14,7 @@ Atlas owns artwork, pivots, region/sequence/state_set/composition definitions in
 
 ## Next gates
 1. Add versioned world/chunk serialization with unknown-vs-air and edit roundtrip tests.
-2. Port proven camera and viewport interaction from Tabletop, implement proper 3D depth and picking, all ramp orientations, exposed faces across boundaries.
+2. Port proven camera and viewport interaction from Tabletop, implement proper 3D depth and picking, shared-edge editing and exposed-face clipping across boundaries.
 3. Validate and render real Atlas pack (region, sequence, state_set, composition); missing assets produce placeholders.
 4. Streaming, LOD, prefabs and material responses; test excavation, fire, slopes, houses/caves and multi-floor surfaces.
 5. Host integration via public contracts; Tabletop owns character stats and gameplay. No duplication.

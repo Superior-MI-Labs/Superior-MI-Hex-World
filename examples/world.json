@@ -8,7 +8,8 @@
       16,
       16,
       16
-    ]
+    ],
+    "geometry_subdivisions": 2
   },
   "simulation": {
     "mode": "frozen",
