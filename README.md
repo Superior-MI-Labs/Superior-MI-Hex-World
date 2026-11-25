@@ -49,3 +49,6 @@ v0.20: published Atlas discovery, generated composition controls and reach-check
 
 
 v0.21: canonical self-describing Atlas spatial profiles automatically resolve visual height, compatible directional views and wind response.
+
+
+v0.22: deterministic multi-family decorative scatter, canonical spatial asset adoption, seasonal variants and hash-pinned style archives.

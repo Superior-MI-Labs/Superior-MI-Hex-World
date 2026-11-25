@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {createRequire} from "node:module";
 globalThis.VisualAtlasSlots=createRequire(import.meta.url)("../vendor/atlas/slot-core.js");
-import {validateStyle,vegetationSamples,resolveStyleProfile,loadStyle,fetchStyle,vegetationRaster,terrainTexturePlan,vegetationWind} from "../src/art-style.mjs";
+import {validateStyle,vegetationSamples,resolveStyleProfile,loadStyle,fetchStyle,vegetationRaster,terrainTexturePlan,vegetationWind,scatterSamples,scatterRaster} from "../src/art-style.mjs";
 import {validateSpritePack} from "../src/assets.mjs";
 import {visibleTriangle} from "../src/camera.mjs";
-const profile=validateStyle(JSON.parse(readFileSync(new URL("../examples/meadow-style.json",import.meta.url))));
+const fullProfile=validateStyle(JSON.parse(readFileSync(new URL("../examples/meadow-style.json",import.meta.url))));
+const profile=structuredClone(fullProfile);delete profile.vegetation.families;
 const pack=JSON.parse(readFileSync(new URL("../examples/meadow-art/manifest.json",import.meta.url)));
 test("art style references canonical Atlas regions and a wind state set",()=>{for(const id of [profile.detail.top,profile.detail.side,profile.vegetation.assets["meadow-02"],profile.vegetation.assets["meadow-03"]])assert.equal(validateSpritePack(pack,id).get(id).kind,"region");const id=profile.vegetation.assets["meadow-01"].asset;assert.equal(validateSpritePack(pack,id).get(id).kind,"state_set");});
 test("art style rejects broken visual parameters",()=>{assert.throws(()=>validateStyle({...profile,lighting:{ambient:.5,direction:[0,0,0]}}));assert.throws(()=>validateStyle({...profile,vegetation:{...profile.vegetation,samples_per_triangle:100}}));});
@@ -40,3 +41,27 @@ test("material layers share static raster loading; seasonal overrides preserve f
 test("texture plan collapses unmapped materials and preserves weighted layers",()=>{const f={kind:"top",material:"soil",attributes:[{materialWeights:[["soil",1]]},{materialWeights:[["soil",.5],["stone",.5]]},{materialWeights:[["sand",.25],["soil",.25],["stone",.5]]}]};const p=terrainTexturePlan(f,profile);assert.deepEqual(p.keys,[null,"sand","stone"]);assert.deepEqual(p.weights,[[1,0,0,0],[.5,0,.5,0],[.25,.25,.5,0]]);assert.deepEqual(terrainTexturePlan(f,null).weights,[[1,0,0,0],[1,0,0,0],[1,0,0,0]]);});
 
 test("seasonal asset may independently declare wind state and flexibility",async()=>{const p=structuredClone(profile);p.vegetation.seasonal.winter["meadow-01"]={asset:"smi.hex.grass.states.fixture",state:"calm",wind:{bend:.2,states:[{min_speed_ft_s:5,state:"wind"}]}};const openPack=async()=>({createRaster(b){return {binding:b,image:{},async update(){}};}});const s=await loadStyle(p,{baseURL:"https://example.org/style.json",openPack});assert.equal(vegetationRaster(s,"meadow-01",{velocity_ft_s:[6,0]},"winter").binding.state,"wind");assert.equal(vegetationRaster(s,"meadow-01",{velocity_ft_s:[0,0]},"winter").binding.state,"calm");assert.equal(vegetationWind(s.profile,"meadow-01","winter").bend,.2);assert.equal(vegetationWind(s.profile,"meadow-01","autumn").bend,.42);});
+
+test("scatter is independent of grass, conforms to slopes and preserves stable LOD",()=>{
+  const p=structuredClone(fullProfile),f=p.vegetation.families[0];f.density=1;f.samples_per_triangle=4;
+  const face={kind:"top",material:"soil",triangle:2,address:[-16,3,0],points:[[0,0,0],[5,0,2],[0,5,2]],surface:{growth:1,scorch:0,snow:0},vegetation:0};
+  const all=scatterSamples(face,"w",p,24),mid=scatterSamples(face,"w",p,9.5);
+  assert.equal(all.length,4);assert.deepEqual(mid,all.slice(0,2));assert.deepEqual(scatterSamples(face,"w",p,24),all);
+  for(const s of all)assert.ok(Math.abs(s.point[2]-.4*(s.point[0]+s.point[1]))<1e-9);
+  assert.equal(scatterSamples({...face,surface:{...face.surface,scorch:1}},"w",p,24).length,0);
+  assert.equal(scatterSamples({...face,material:"stone"},"w",p,24).length,0);
+  assert.equal(scatterSamples({...face,points:[[0,0,0],[5,0,20],[0,5,20]]},"w",p,24).length,0);
+  assert.equal(scatterSamples({...face,kind:"side"},"w",p,24).length,0);
+  assert.throws(()=>validateStyle({...p,vegetation:{...p.vegetation,families:[f,f]}}));
+  f.variants[0].weight=0;assert.throws(()=>validateStyle(p));
+});
+test("scatter adopts actual Atlas height, views and wind; reuses pack sessions and seasonal size",async()=>{
+  const p=structuredClone(fullProfile),v=p.vegetation.families[0].variants[0];v.seasonal={winter:"smi.hex.grass.02"};
+  const opened=[],openPack=async(url)=>{opened.push(url);return {describe:id=>validateSpritePack(pack,id).get(id),createRaster(b){return {binding:b,image:{},async update(){}};}};};
+  const s=await loadStyle(p,{baseURL:"https://example.org/style.json",openPack});assert.equal(opened.length,1);
+  const sample={family:"brush-fixture",variant:"tall",orientation:0,scale:1},calm={velocity_ft_s:[0,0]};
+  const a=scatterRaster(s,sample,calm,"summer",1);assert.equal(a.r.binding.asset,"smi.hex.grass.02");assert.equal(a.height,2.5);assert.equal(a.wind.bend,.35);
+  const winter=scatterRaster(s,sample,calm,"winter",3);assert.equal(winter.r.binding.asset,"smi.hex.grass.02");assert.equal(winter.height,a.height);assert.equal(winter.seasonal,true);
+  const windy=scatterRaster(s,{...sample,variant:"sway"},{velocity_ft_s:[20,0]},"summer",0);assert.equal(windy.r.binding.state,"wind");assert.equal(windy.animatedState,true);
+  const broken=structuredClone(p);broken.vegetation.families[0].variants[0].asset="missing";await assert.rejects(()=>loadStyle(broken,{baseURL:"https://example.org/style.json",openPack}),/Missing asset/);
+});

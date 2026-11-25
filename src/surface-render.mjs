@@ -1,7 +1,7 @@
 // All transition values are derived render attributes, never world state.
 import {physicalPosition} from "./core.mjs";
 import {cornerRefs,EDGE_NEIGHBORS,oppositeEdge,vertices} from "./geometry.mjs";
-import {appearance,transitionSettings} from "./materials.mjs";
+import {appearance,transitionSettings,surface} from "./materials.mjs";
 import {TerrainFaceCache} from "./terrain.mjs";
 const mix=(a,b,t)=>a+(b-a)*t;
 const vector=(a,b,t)=>a.map((v,i)=>mix(v,b[i],t));
@@ -59,7 +59,7 @@ export function decorateTerrain(world,addresses,catalog,{enabled=true,cache=new 
           return {color:app.color,cover:[0,c[1],c[2]],rim:Math.max(0,h-z)};
         });
       }
-      result.push({...face,...app,vegetation,...(attributes?{attributes}: {})});
+      result.push({...face,...app,vegetation,...(face.kind==="top"?{surface:surface(r.cell.components?.surface)}:{}),...(attributes?{attributes}: {})});
     }
   }
   return result;

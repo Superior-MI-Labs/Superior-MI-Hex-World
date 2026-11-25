@@ -169,6 +169,11 @@ with sync_playwright() as p:
     assert coverage["grass"][1]>240 and coverage["grass"][0]<10,coverage
     assert coverage["rim"][0][1]>200 and coverage["rim"][1][1]<10,coverage
     page.wait_for_function("document.querySelector('#artStatus').textContent === 'Atlas meadow fixture loaded'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).scatter_instances>0")
+    page.locator("#scatter").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).scatter_instances===0")
+    page.locator("#scatter").check()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).scatter_instances>0")
     page.locator("#windSpeed").fill("20")
     page.locator("#applyWind").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).wind_bent_sprites>0 && JSON.parse(document.querySelector('#status').textContent).wind_state_sprites>0")

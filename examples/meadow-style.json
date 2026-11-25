@@ -71,6 +71,78 @@
       "winter": {
         "meadow-01": "smi.hex.grass.02"
       }
-    }
+    },
+    "families": [
+      {
+        "id": "brush-fixture",
+        "materials": [
+          "soil"
+        ],
+        "density": 0.42,
+        "samples_per_triangle": 1,
+        "far_px_per_ft": 5,
+        "near_px_per_ft": 14,
+        "max_grade": 1.5,
+        "surface": {
+          "growth": [
+            0.2,
+            1
+          ],
+          "scorch": [
+            0,
+            0.7
+          ],
+          "snow": [
+            0,
+            0.8
+          ]
+        },
+        "contact": true,
+        "shadow": true,
+        "variants": [
+          {
+            "id": "tall",
+            "asset": "smi.hex.grass.01",
+            "weight": 3,
+            "height_scale": [
+              0.65,
+              1.05
+            ]
+          },
+          {
+            "id": "sway",
+            "asset": "smi.hex.grass.states.fixture",
+            "weight": 2,
+            "height_scale": [
+              0.8,
+              1.2
+            ]
+          }
+        ]
+      },
+      {
+        "id": "dry-tuft-fixture",
+        "materials": [
+          "sand"
+        ],
+        "density": 0.3,
+        "samples_per_triangle": 1,
+        "far_px_per_ft": 8,
+        "near_px_per_ft": 18,
+        "max_grade": 0.8,
+        "variants": [
+          {
+            "id": "dry",
+            "asset": "smi.hex.grass.03",
+            "weight": 1,
+            "height_ft": 0.9,
+            "height_scale": [
+              0.7,
+              1.3
+            ]
+          }
+        ]
+      }
+    ]
   }
 }
