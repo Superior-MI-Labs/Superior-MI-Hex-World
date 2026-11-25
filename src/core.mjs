@@ -1,5 +1,6 @@
 import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
+import {validateEntity} from "./entities.mjs";
 export {shape} from "./geometry.mjs";
 // Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
 const int = Number.isSafeInteger;
@@ -43,10 +44,15 @@ function cell(value, subdivisions) {
   return result;
 }
 export class World {
-  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set();
+  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map();
   constructor(config){this.#config=validateWorld(config);}
   get config(){return copy(this.#config);}
   get chunkCount(){return this.#chunks.size;}
+  get entityCount(){return this.#entities.size;}
+  entities(){return [...this.#entities.values()].map(copy);}
+  getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
+  putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);}
+  removeEntity(id){return this.#entities.delete(id);}
   #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
   defineChunk(cq,cr,cz,defaultCell={material:"air",shape:uniformShape(0)}){
     const key=addressKey(cq,cr,cz);requireThat(!this.#chunks.has(key),"Chunk already defined");
@@ -80,7 +86,7 @@ export class World {
     }
   }
   snapshot(){
-    return {schema:"smi-hex-save/1",world:this.config,chunks:[...this.#chunks].map(([key,c])=>({address:key.split(",").map(Number),defaultCell:copy(c.defaultCell),cells:[...c.cells].map(([local,value])=>({local:local.split(",").map(Number),value:copy(value)}))}))};
+    return {schema:"smi-hex-save/1",world:this.config,entities:this.entities(),chunks:[...this.#chunks].map(([key,c])=>({address:key.split(",").map(Number),defaultCell:copy(c.defaultCell),cells:[...c.cells].map(([local,value])=>({local:local.split(",").map(Number),value:copy(value)}))}))};
   }
   static restore(data){
     requireThat(data?.schema==="smi-hex-save/1"&&Array.isArray(data.chunks),"Invalid world save");
@@ -98,6 +104,8 @@ export class World {
         w.set(...address,e.value);
       }
     }
+    requireThat(data.entities===undefined||Array.isArray(data.entities),"Invalid saved entities");
+    for(const e of data.entities??[])w.putEntity(e);
     return w;
   }
 }

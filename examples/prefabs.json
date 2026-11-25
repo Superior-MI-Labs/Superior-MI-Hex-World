@@ -1,0 +1,318 @@
+[
+  {
+    "schema": "smi-hex-prefab/1",
+    "id": "stone-gate",
+    "name": "Stone gate",
+    "grid": {
+      "horizontal_ft": 5,
+      "vertical_ft": 5,
+      "geometry_subdivisions": 2
+    },
+    "cells": [
+      {
+        "offset": [
+          -1,
+          0,
+          0
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "material": "stone"
+      },
+      {
+        "offset": [
+          1,
+          0,
+          0
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "material": "stone"
+      },
+      {
+        "offset": [
+          -1,
+          0,
+          1
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "material": "stone"
+      },
+      {
+        "offset": [
+          0,
+          0,
+          1
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "material": "stone"
+      },
+      {
+        "offset": [
+          1,
+          0,
+          1
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "material": "stone"
+      }
+    ]
+  },
+  {
+    "schema": "smi-hex-prefab/1",
+    "id": "stone-platform",
+    "name": "Raised stone platform",
+    "grid": {
+      "horizontal_ft": 5,
+      "vertical_ft": 5,
+      "geometry_subdivisions": 2
+    },
+    "cells": [
+      {
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "material": "stone"
+      },
+      {
+        "offset": [
+          1,
+          0,
+          0
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "material": "stone"
+      },
+      {
+        "offset": [
+          0,
+          1,
+          0
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "material": "stone"
+      }
+    ]
+  },
+  {
+    "schema": "smi-hex-prefab/1",
+    "id": "stone-stair",
+    "name": "Stone step",
+    "grid": {
+      "horizontal_ft": 5,
+      "vertical_ft": 5,
+      "geometry_subdivisions": 2
+    },
+    "cells": [
+      {
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            0,
+            0,
+            1,
+            2,
+            2,
+            1,
+            1
+          ]
+        },
+        "material": "stone"
+      },
+      {
+        "offset": [
+          1,
+          0,
+          0
+        ],
+        "shape": {
+          "lower": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "upper": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "material": "stone"
+      }
+    ]
+  }
+]

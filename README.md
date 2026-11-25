@@ -13,3 +13,6 @@ v0.8: Atlas terrain style fixture, repeating detail, directional terrain lightin
 
 
 v0.9: opt-in exploration meadow, deterministic chunk generation, viewport-driven active domain, bounded mesh cache, and offscreen reactive-fire progression. Export saves before switching world modes.
+
+
+v0.10: atomic rotated prefab placement, persistent Atlas-bound world objects and surface anchors. Existing terrain saves remain compatible.

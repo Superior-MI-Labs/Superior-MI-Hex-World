@@ -118,6 +118,28 @@ with sync_playwright() as p:
     page.wait_for_function("(n)=>JSON.parse(document.querySelector('#status').textContent).resident_chunks>n",arg=initial,timeout=60000)
     page.get_by_role("button",name="Reset view").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.panX===0 && JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===1)",timeout=60000)
+    # Return to a deterministic island for construction and persistent object tests.
+    page.locator("#worldMode").select_option("island")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_mode==='island'")
+    page.locator("#prefab").select_option("stone-gate")
+    page.locator("#previewPrefab").check()
+    assert page.locator("#placePrefab").is_enabled()
+    page.locator("#placePrefab").click()
+    assert page.locator("#placePrefab").is_disabled()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===1")
+    page.locator("#placeActor").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===2")
+    page.locator("#removeObject").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===1")
+    with page.expect_download() as download:
+        page.locator("#save").click()
+    save=download.value.path()
+    data=json.loads(Path(save).read_text())
+    assert len(data["entities"])==1
+    assert sum(1 for c in data["chunks"] for e in c["cells"] if e["value"]["material"]=="stone")==5
+    page.locator("#load").set_input_files(str(save))
+    page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===1")
     page.screenshot(path="/tmp/hex-world-qa.png",full_page=True)
     assert not errors,errors
     print("GPU depth, Atlas sprite load, vertical construction and browser smoke passed")
