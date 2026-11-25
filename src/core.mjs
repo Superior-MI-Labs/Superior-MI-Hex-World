@@ -48,7 +48,32 @@ export class World {
     this.#chunks.set(key,{defaultCell:cell(defaultCell,this.#config.grid.geometry_subdivisions),cells:new Map()});
   }
   get(q,r,z){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);return chunk ? copy(chunk.cells.get(local)??chunk.defaultCell):undefined;}
-  set(q,r,z,value){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");chunk.cells.set(local,cell(value,this.#config.grid.geometry_subdivisions));}
+  set(q,r,z,value){this.apply([{address:[q,r,z],value}]);}
+  apply(edits){
+    const pending=edits.map(({address,value})=>{const [key,local]=this.#location(...address),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");return {chunk,local,value:cell(value,this.#config.grid.geometry_subdivisions)};});
+    for(const {chunk,local,value} of pending)chunk.cells.set(local,value);
+  }
+  snapshot(){
+    return {schema:"smi-hex-save/1",world:this.config,chunks:[...this.#chunks].map(([key,c])=>({address:key.split(",").map(Number),defaultCell:copy(c.defaultCell),cells:[...c.cells].map(([local,value])=>({local:local.split(",").map(Number),value:copy(value)}))}))};
+  }
+  static restore(data){
+    requireThat(data?.schema==="smi-hex-save/1"&&Array.isArray(data.chunks),"Invalid world save");
+    const w=new World(data.world),size=w.#config.grid.chunk_size;
+    const validAddress=a=>Array.isArray(a)&&a.length===3&&a.every(int);
+    for(const c of data.chunks){
+      requireThat(validAddress(c.address)&&Array.isArray(c.cells),"Invalid chunk record");
+      w.defineChunk(...c.address,c.defaultCell);
+      const seen=new Set();
+      for(const e of c.cells){
+        requireThat(validAddress(e.local)&&e.local.every((v,i)=>v>=0&&v<size[i]),"Invalid local address");
+        const k=addressKey(...e.local);requireThat(!seen.has(k),"Duplicate cell");seen.add(k);
+        const address=e.local.map((v,i)=>c.address[i]*size[i]+v);
+        requireThat(address.every(int)&&chunkOf(...address,size).chunk.every((v,i)=>v===c.address[i]),"Invalid global address");
+        w.set(...address,e.value);
+      }
+    }
+    return w;
+  }
 }
 export class Clock {
   #mode; #rate; #simulation=0; #visual=0;
