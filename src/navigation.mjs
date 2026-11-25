@@ -46,7 +46,15 @@ function support(world,grid,address,edge){
   const v=vertices(c.shape,grid),z=address[2]*grid.vertical_ft;
   const center=[0,0],boundary=edge===undefined?center:midpoint(v.upper[edge],v.upper[(edge+1)%6]).slice(0,2);
   const a=interval(c,grid,center,address[2]),b=interval(c,grid,boundary,address[2]);
-  if(!a||!b||a[1]-a[0]<=EPS||b[1]-b[0]<=EPS)return null;
+  if(!a||!b||a[1]-a[0]<=EPS)return null;
+  if(b[1]-b[0]<=EPS){
+    // A ramp may taper into the top of a solid cell directly below.
+    // A suspended zero-thickness tip is not independently walkable.
+    const [q,r,level]=address;
+    if(edge===undefined||Math.abs(b[1]-z)>EPS)return null;
+    const below=interval(world.get(q,r,level-1),grid,boundary,level-1);
+    if(!below||below[1]-below[0]<=EPS||Math.abs(below[1]-b[1])>EPS)return null;
+  }
   return {points:[center,boundary],feet:[a[1],b[1]]};
 }
 export function standability(world,address,profile){

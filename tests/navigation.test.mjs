@@ -47,3 +47,5 @@ test("contact shadows use only actual support top triangles and preserve geometr
  const [s,...other]=contactShadows([a,b,c],[{address:[0,0,0],point:[0,0,1],radius:1,opacity:.4}]);
  assert.equal(other.length,0);assert.equal(s.points,a.points);assert.deepEqual(s.uv,[[.5,.5],[1,.5],[.5,1]]);assert.equal(s.opacity,.4);
 });
+
+test("supported taper joins a lower floor, and grade is enforced independently of step",()=>{const w=world();w.set(0,0,0,solid());w.set(1,0,0,solid());const s=uniformShape(1);s.upper[2]=0;s.upper[3]=0;w.set(1,0,1,{material:"stone",shape:s});const from=[0,0,0],to=[1,0,1];assert.equal(walkStep(w,from,to,p).ok,true);assert.equal(walkStep(w,from,to,{...p,max_grade:.5}).reason,"slope too steep");w.set(1,0,0,{material:"air",shape:uniformShape(0)});assert.equal(walkStep(w,from,to,p).reason,"no known support");});

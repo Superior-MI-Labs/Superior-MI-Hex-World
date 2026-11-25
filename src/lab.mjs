@@ -57,7 +57,7 @@ function syncMovement(){
   $("previewRoute").disabled=$("moveObject").disabled=!items.length;routePreview=null;$("routeStatus").textContent="";
 }
 $("movingObject").onchange=()=>{routePreview=null;$("routeStatus").textContent="";};
-function routeAction(commit){try{routePreview=(commit?moveObject:planObjectMove)(world,$("movingObject").value,[...selected],movement);$("routeStatus").textContent=routePreview.ok?(commit?"Moved: ":"Route: ")+(routePreview.path.length-1)+" steps":routePreview.reason;if(commit&&routePreview.ok)syncConstruction();}catch(e){$("routeStatus").textContent=e.message;routePreview=null;}}
+function routeAction(commit){try{const result=(commit?moveObject:planObjectMove)(world,$("movingObject").value,[...selected],movement);if(commit&&result.ok)syncConstruction();routePreview=commit?null:result;$("routeStatus").textContent=result.ok?(commit?"Moved: ":"Route: ")+(result.path.length-1)+" steps":result.reason;}catch(e){$("routeStatus").textContent=e.message;routePreview=null;}}
 $("previewRoute").onclick=()=>routeAction(false);$("moveObject").onclick=()=>routeAction(true);
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function registerPrefab(p){if(prefabCatalog.some(x=>x.id===p.id))throw Error("Prefab ID already exists");prefabCatalog.push(p);prefabSelect.add(new Option(p.name,p.id));prefabSelect.value=p.id;syncConstruction();}
