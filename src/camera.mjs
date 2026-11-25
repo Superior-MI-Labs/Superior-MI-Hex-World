@@ -27,3 +27,11 @@ export function visibleTriangle(face,view,width,height,padding=0){
   const p=face.points.map(view);
   return Math.max(...p.map(v=>v.x))>=-padding&&Math.min(...p.map(v=>v.x))<=width+padding&&Math.max(...p.map(v=>v.y))>=-padding&&Math.min(...p.map(v=>v.y))<=height+padding;
 }
+
+// Inverse of the orthographic projection on a specified world-height plane.
+export function unprojectPlane(x,y,z,{yaw=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
+  if(!Number.isFinite(scale)||scale<=0)throw Error("Invalid camera scale");
+  const u=(x-width/2-panX)/scale,v=((y-height/2-panY)/scale+z*Math.sqrt(2/3))*Math.sqrt(3);
+  const a=yaw*Math.PI/3,c=Math.cos(a),s=Math.sin(a);
+  return [u*c+v*s,-u*s+v*c,z];
+}

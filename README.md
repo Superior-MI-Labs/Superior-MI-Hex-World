@@ -10,3 +10,6 @@ v0.7: neighbor-aware material/coverage transitions, optional Atlas transition ma
 
 
 v0.8: Atlas terrain style fixture, repeating detail, directional terrain lighting, deterministic vegetation samples, viewport culling and vegetation detail scaling. See [art direction](docs/ART_DIRECTION.md).
+
+
+v0.9: opt-in exploration meadow, deterministic chunk generation, viewport-driven active domain, bounded mesh cache, and offscreen reactive-fire progression. Export saves before switching world modes.

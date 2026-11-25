@@ -71,11 +71,13 @@ export function cellFaces(world,address,grid=world.config.grid){
 // their affected neighbors; surface-only changes never invalidate topology.
 export class TerrainFaceCache{
   #world;#grid;#entries=new Map();
-  constructor(world){this.#world=world;this.#grid=world.config.grid;}
+  constructor(world,{maxEntries=12000}={}){this.#world=world;this.#grid=world.config.grid;assert(Number.isInteger(maxEntries)&&maxEntries>0,"Invalid cache limit");this.maxEntries=maxEntries;}
+  get size(){return this.#entries.size;}
   get(address){
     const key=addressKey(...address),signature=[address,...neighbors(...address)].map(a=>this.#world.geometryRevisionAt(...a)).join("|");
-    const old=this.#entries.get(key);if(old?.signature===signature)return old.faces;
-    const faces=cellFaces(this.#world,address,this.#grid);this.#entries.set(key,{signature,faces});return faces;
+    const old=this.#entries.get(key);if(old?.signature===signature){this.#entries.delete(key);this.#entries.set(key,old);return old.faces;}
+    const faces=cellFaces(this.#world,address,this.#grid);this.#entries.delete(key);this.#entries.set(key,{signature,faces});
+    if(this.#entries.size>this.maxEntries)this.#entries.delete(this.#entries.keys().next().value);return faces;
   }
   clear(){this.#entries.clear();}
 }

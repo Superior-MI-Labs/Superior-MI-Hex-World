@@ -7,14 +7,24 @@ import {project,pickFace,billboard,visibleTriangle} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
 import {loadStyle,vegetationSamples} from "./art-style.mjs";
+import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
 const base=await fetch("./examples/world.json").then(r=>{if(!r.ok)throw Error("World unavailable");return r.json()});
 const catalog=validateMaterials(await fetch("./examples/materials.json").then(r=>{if(!r.ok)throw Error("Materials unavailable");return r.json();}));
 let world,grid,clock=new Clock(base.simulation),yaw=0,flame=null,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24,panX=0,panY=50,meshCache;
-const ground=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
-const domain=ground.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
+const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
+const islandDomain=island.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
+let ground=island,domain=islandDomain,exploration=false,regionKey="",cameraKey="",activeChunks=0;
+function camera(){return {yaw,scale,width:canvas.width,height:canvas.height,panX,panY};}
+function refreshRegion(force=false){
+  if(!exploration)return;
+  const current=JSON.stringify(camera());if(!force&&current===cameraKey)return;cameraKey=current;
+  const bounds=viewportBounds(camera(),grid,undefined,Math.ceil(scale*5)),key=JSON.stringify(bounds);
+  if(!force&&key===regionKey)return;
+  const loaded=loadViewport(world,bounds);regionKey=key;domain=loaded.addresses;ground=domain.filter(a=>a[2]===0);activeChunks=loaded.chunks.length;dirty=true;
+}
 let actor=null,actorAddress=[0,0,0],spriteRequest=0,art=null;
 // Temporary transparent vertical artwork, not an Atlas release.
 const tufts=new Map(catalog.vegetation.variants.map(v=>{
@@ -38,7 +48,14 @@ function refreshVertexOptions(){
 function selectFace(key){faceSelect.value=key;sync();}
 
 const get=()=>world.get(...selected).shape;
-function reset(){const n=base.grid.geometry_subdivisions;grid={...base.grid};world=new World({...base,grid});meshCache=new TerrainFaceCache(world);for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));selected=[0,0,0];faceSelect.value="upper";actorAddress=[0,0,0];flame=null;dirty=true;sync();}
+function reset(){
+  const n=base.grid.geometry_subdivisions;grid={...base.grid};world=new World(exploration?explorationConfig(base):base);meshCache=new TerrainFaceCache(world);
+  selected=[0,0,0];faceSelect.value="upper";actorAddress=[0,0,0];flame=null;regionKey="";cameraKey="";
+  if(exploration){yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;refreshRegion(true);}
+  else{ground=island;domain=islandDomain;activeChunks=0;for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));}
+  $("worldMode").value=exploration?"exploration":"island";dirty=true;sync();
+}
+$("worldMode").onchange=()=>{const next=$("worldMode").value==="exploration";if(next===exploration)return;if(!confirm("Start a new world? Export your current world first if you want to keep it.")){$("worldMode").value=exploration?"exploration":"island";return;}exploration=next;reset();};
 function sync(){
   $("level").value=selected[2];refreshVertexOptions();
   const n=grid.geometry_subdivisions,{layer,index}=activeRef(),s=get(),height=s[layer][index];
@@ -62,7 +79,7 @@ for(const k of ["growth","health","moisture","leaves","snow","scorch"])$(k).onin
 $("material").onchange=()=>{const cell=world.get(...selected);if(!hasVolume(cell.shape)){sync();return;}const material=$("material").value,s=surface(cell.components?.surface);world.set(...selected,withSurface({...cell,material},catalog.materials[material].vegetation?s:{...s,growth:0,burn:0}));dirty=true;sync();};
 $("reactive").onclick=()=>modifySurface((s,c)=>ignite(catalog,c));
 $("extinguish").onclick=()=>{modifySurface(s=>({...s,burn:0}));flame=null;};
-function simulate(seconds){if(seconds<=0)return;const edits=[];for(const address of domain){const c=world.get(...address),s=c.components?.surface;if(s?.burn>0)edits.push({address,value:withSurface(c,advanceSurface(s,seconds,catalog.vegetation.burn_seconds))});}if(edits.length){world.apply(edits);dirty=true;sync();}}
+function simulate(seconds){if(seconds<=0)return;const edits=[];for(const address of world.burningAddresses()){const c=world.get(...address),s=c.components?.surface;if(s?.burn>0)edits.push({address,value:withSurface(c,advanceSurface(s,seconds,catalog.vegetation.burn_seconds))});}if(edits.length){world.apply(edits);dirty=true;sync();}}
 
 reset();
 $("level").onchange=()=>{selected=[selected[0],selected[1],Number($("level").value)];sync();};
@@ -87,13 +104,22 @@ function demoSurface(kind){
   world.apply(edits);dirty=true;sync();
 }
 $("transitionDemo").onchange=()=>{const k=$("transitionDemo").value;if(k)demoSurface(k);$("transitionDemo").value="";};
-$("reset").onclick=reset;
+$("reset").onclick=()=>{if(exploration&&!confirm("Reset exploration world and discard edits?"))return;reset();};
 $("surface").onchange=sync;$("vertex").onchange=sync;$("connected").onchange=sync;$("height").oninput=()=>move(Number($("height").value));
 const presets={Full:[1,1,1,1,1,1,1],Half:[.5,.5,.5,.5,.5,.5,.5],Slope:[1,1,.5,0,0,.5,.5],Corner:[1,0,1,1,1,1,1],Peak:[0,0,0,0,0,0,1],Basin:[1,1,1,1,1,1,0],Empty:[0,0,0,0,0,0,0]};
 for(const [name,h] of Object.entries(presets)){const b=document.createElement("button");b.textContent=name;b.title="Replace selected cell only";b.onclick=()=>set({lower:Array(7).fill(0),upper:h.map(v=>Math.round(v*grid.geometry_subdivisions))});$("presets").append(b);}
 const ceiling=document.createElement("button");ceiling.textContent="Raised slab";ceiling.onclick=()=>set(uniformShape(grid.geometry_subdivisions,grid.geometry_subdivisions/2));$("presets").append(ceiling);
 $("save").onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(world.snapshot(),null,2)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download="hex-world.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-$("load").onchange=async()=>{try{const file=$("load").files[0];if(!file)return;if(file.size>5e6)throw Error("Lab import limit 5 MB");const next=World.restore(JSON.parse(await file.text())),g=next.config.grid;if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||!domain.every(a=>next.get(...a)))throw Error("This lab previews a 19-column, five-level domain with two subdivisions");world=next;meshCache=new TerrainFaceCache(world);grid=g;selected=[0,0,0];faceSelect.value="upper";dirty=true;flame=null;sync();$("message").textContent="World imported";}catch(e){$("message").textContent=e.message;}finally{$("load").value="";}};
+$("load").onchange=async()=>{try{
+  const file=$("load").files[0];if(!file)return;if(file.size>25e6)throw Error("Lab import limit 25 MB");
+  const next=World.restore(JSON.parse(await file.text())),g=next.config.grid,cfg=next.config,generated=cfg.generation?.profile===EXPLORATION_PROFILE;
+  if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||g.chunk_size.some((n,i)=>n!==base.grid.chunk_size[i])||(!generated&&(cfg.generation||!islandDomain.every(a=>next.get(...a)))))throw Error("Unsupported laboratory world profile");
+  if(generated){if(typeof cfg.generation.seed!=="string"||!cfg.generation.seed)throw Error("Invalid generation seed");loadViewport(next,viewportBounds({yaw:0,scale:24,width:canvas.width,height:canvas.height,panX:0,panY:50},g,undefined,120));}
+  world=next;meshCache=new TerrainFaceCache(world);grid=g;exploration=generated;selected=[0,0,0];actorAddress=[0,0,0];faceSelect.value="upper";dirty=true;flame=null;regionKey="";cameraKey="";
+  yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;$("worldMode").value=generated?"exploration":"island";
+  if(generated)refreshRegion(true);else{ground=island;domain=islandDomain;activeChunks=0;}
+  sync();$("message").textContent="World imported";
+}catch(e){$("message").textContent=e.message;}finally{$("load").value="";}};
 $("mode").onchange=()=>clock.configure($("mode").value);$("step").onclick=()=>{const before=clock.simulation;clock.advance(6);simulate(clock.simulation-before);};$("fire").onclick=()=>flame={address:[...selected],instance:effect({behavior:"persistent"},clock.simulation)};$("timed").onclick=()=>flame={address:[...selected],instance:effect({behavior:"timed",duration:5},clock.simulation)};$("rotate").onclick=()=>yaw=(yaw+1)%6;$("zoom").oninput=()=>scale=Number($("zoom").value);
 const verticalScale=Math.sqrt(2/3);
 function view(p){return project(p,{yaw,scale,width:canvas.width,height:canvas.height,panX,panY});}
@@ -113,7 +139,7 @@ canvas.oncontextmenu=e=>e.preventDefault();
 canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=Math.max(12,Math.min(48,scale*Math.exp(-e.deltaY*.001))),ratio=next/scale;panX=x-canvas.width/2-(x-canvas.width/2-panX)*ratio;panY=y-canvas.height/2-(y-canvas.height/2-panY)*ratio;scale=next;$("zoom").value=String(next);},{passive:false});
 $("resetView").onclick=()=>{yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
 canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
-function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);ctx.clearRect(0,0,900,450);
+function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);refreshRegion();ctx.clearRect(0,0,900,450);
   if(dirty){faces=decorateTerrain(world,domain,catalog,{enabled:$("transitions").checked,cache:meshCache});dirty=false;}
   let sprite=null;
   if(actor&&$("showActor").checked){
@@ -138,12 +164,12 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
   if(sprite)sprites.push(sprite);
   gpu.render(visible,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null});
   if($("wire").checked){
-    for(const a of domain){if(a[2]!==selected[2]||hasVolume(world.get(...a).shape))continue;polygon(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)),null,"#344b56");}
+    for(const a of domain){if(a[2]!==selected[2])continue;const p=projectLocal(a,[0,0,0]);if(p.x<-scale*5||p.x>canvas.width+scale*5||p.y<-scale*5||p.y>canvas.height+scale*5||hasVolume(world.get(...a).shape))continue;polygon(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)),null,"#344b56");}
 
   }
   function drawFire(a){const s=world.get(...a).shape,p=projectLocal(a,[0,0,sampleSurface(s,grid,0,0)]);for(let i=0;i<5;i++){ctx.fillStyle=i%2?"#ffcf69":"#ec783c";ctx.beginPath();ctx.ellipse(p.x+i*8-16,p.y-15,7,17+7*Math.sin(clock.visual*9+i),0,0,Math.PI*2);ctx.fill();}}
   if(flame&&effectActive(flame.instance,clock.simulation))drawFire(flame.address);
-  for(const a of domain)if(world.get(...a).components?.surface?.burn>0)drawFire(a);
+  for(const a of world.burningAddresses())drawFire(a);
   const v=vertices(get(),grid),key=activeFace();
   handles=refs().map(h=>({...h,...projectLocal(selected,v[h.layer][h.index])}));
   // Outline the logical control face even when a neighboring cell clips it.
@@ -158,6 +184,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:flame?.instance.behavior??"none",active:!!flame&&effectActive(flame.instance,clock.simulation)},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:exploration?"exploration":"island",resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:flame?.instance.behavior??"none",active:!!flame&&effectActive(flame.instance,clock.simulation)},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
