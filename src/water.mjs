@@ -1,6 +1,6 @@
 // Derived horizontal free surfaces, clipped against the existing solid fan.
 import {physicalPosition} from "./core.mjs";
-import {vertices,hasVolume,EDGE_NEIGHBORS,oppositeEdge} from "./geometry.mjs";
+import {vertices,hasVolume,EDGE_NEIGHBORS,oppositeEdge,exposedEdge} from "./geometry.mjs";
 const EPS=1e-8;
 function clip(poly,depth,epsilon=EPS){
   const out=[];
@@ -34,9 +34,28 @@ export function waterFaces(world,address,grid=world.config.grid){
   }
   return out;
 }
-export function buildWaterSurfaces(world,addresses){
+// Exposed water curtains between unequal levels. Reuse the solid edge
+// interval subtractor; unsupported raised solids remain top-only.
+export function waterSides(world,address,g=world.config.grid){
+  const c=world.get(...address),w=c?.components?.water,bed=waterBed(c,g);
+  if(!w?.fill||!bed)return [];
+  const v=vertices(c.shape,g).upper,o=physicalPosition(...address,g),out=[];
+  for(let i=0;i<6;i++){
+    const j=(i+1)%6,[dq,dr]=EDGE_NEIGHBORS[i],n=world.get(address[0]+dq,address[1]+dr,address[2]),b=waterBed(n,g);
+    if(!b)continue;
+    const k=oppositeEdge(i),l=(k+1)%6,nf=n.components?.water?.fill??0;
+    const own={lower:[bed[i],bed[j]],upper:[w.fill,w.fill]};
+    const neighbor={lower:[0,0],upper:[Math.max(b[l],nf),Math.max(b[k],nf)]};
+    for(const poly of exposedEdge(own,neighbor)){
+      const points=poly.map(([t,z])=>[o.x+v[i][0]+(v[j][0]-v[i][0])*t,o.y+v[i][1]+(v[j][1]-v[i][1])*t,o.z+z*g.vertical_ft]);
+      for(const ids of [[0,1,2],[0,2,3]])out.push({kind:"water-side",address:[...address],points:ids.map(k=>points[k]),depth:ids.map(k=>Math.max(0,(w.fill-poly[k][1])*g.vertical_ft)),flow:[...w.flow_ft_s]});
+    }
+  }
+  return out;
+}
+export function buildWaterSurfaces(world,addresses,{sides=false}={}){
   const g=world.config.grid,out=[];
-  for(const a of addresses)for(const f of waterFaces(world,a,g))out.push(f);
+  for(const a of addresses){out.push(...waterFaces(world,a,g));if(sides)out.push(...waterSides(world,a,g));}
   return out;
 }
 
@@ -99,13 +118,15 @@ export function planWaterStep(world){
     const k=key(address);if(nodes.has(k))return nodes.get(k);
     if(nodes.size>=CELL_LIMIT)throw Error("Water candidate budget exceeded");
     const cell=world.get(...address);if(!cell){nodes.set(k,null);return null;}
+    if(cell.components?.water?.fixed){nodes.set(k,null);return null;}
     const b=waterBed(cell,g);if(!b){nodes.set(k,null);return null;}
     const signature=b.join(","),bed=beds.get(signature)??b;beds.set(signature,bed);
     const fill=cell.components?.water?.fill??0,volume=waterVolume(bed,fill),capacity=waterVolume(bed,1);
-    const node={address,cell,bed,fill,volume,capacity,out:0,in:0,delta:0};nodes.set(k,node);return node;
+    const node={address,cell,bed,fill,volume,capacity,out:0,in:0,delta:0,flow:[0,0]};nodes.set(k,node);return node;
   }
   let count=0;
   for(const a of world.waterAddresses()){
+    if(world.get(...a)?.components?.water?.fixed)continue;
     if(++count>WATER_WET_LIMIT)throw Error("Water wet-cell budget exceeded");
     const n=get(a);if(!n){unsupported++;continue;}if(n.volume>VOLUME_EPS)wet.push(n);
   }
@@ -137,16 +158,18 @@ export function planWaterStep(world){
   for(const {a,b,amount} of flux){
     const n=amount*Math.min(1,a.volume/a.out,(b.capacity-b.volume)/b.in);
     a.delta-=n;b.delta+=n;moved+=n;
+    const dq=b.address[0]-a.address[0],dr=b.address[1]-a.address[1],dx=dq+dr/2,dy=dr*Math.sqrt(3)/2;
+    for(const v of [a,b]){v.flow[0]+=dx*n;v.flow[1]+=dy*n;}
   }
   const edits=[];let before=0,after=0;
   for(const n of nodes.values()){
     if(!n)continue;
     before+=n.volume;let volume=n.volume;
-    if(Math.abs(n.delta)>0){
+    if(Math.abs(n.delta)>0||n.cell.components?.water?.flow_ft_s.some(v=>v!==0)){
       volume=Math.max(0,Math.min(n.capacity,n.volume+n.delta));
       const {water,...components}=n.cell.components??{};
       const fill=fillForVolume(n.bed,volume);
-      if(fill>0)components.water={fill,flow_ft_s:water?.flow_ft_s??[0,0]};
+      if(fill>0){const f=n.flow.map(v=>v*g.horizontal_ft/WATER_TICK_SECONDS/Math.max(volume,.01)),speed=Math.hypot(...f);components.water={fill,flow_ft_s:speed>30?f.map(v=>v*30/speed):f};}
       edits.push({address:n.address,value:{...n.cell,components}});
       volume=waterVolume(n.bed,fill);
     }

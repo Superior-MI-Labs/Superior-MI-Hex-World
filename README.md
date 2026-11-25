@@ -73,3 +73,6 @@ v0.28: persisted authored water fill and flow, terrain-clipped water surfaces an
 
 
 v0.29: opt-in conservative floor-connected water transfer, gravity, shared-edge sills and simulation-clock ticks.
+
+
+v0.30: multi-cell editor, smooth keyboard camera, fixed animated waterways, exposed water sides and frame-stage performance diagnostics.

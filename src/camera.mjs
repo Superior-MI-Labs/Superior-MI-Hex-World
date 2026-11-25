@@ -35,3 +35,14 @@ export function unprojectPlane(x,y,z,{yaw=0,scale=24,width=900,height=450,panX=0
   const a=yaw*Math.PI/3,c=Math.cos(a),s=Math.sin(a);
   return [u*c+v*s,-u*s+v*c,z];
 }
+
+export const wrapYaw=y=>((y%6)+6)%6;
+export function turnCamera(from,target,now){return {from,to:from+wrapYaw(target-from+3)-3,started:now};}
+export function sampleTurn(turn,now){
+  const t=Math.max(0,Math.min(1,(now-turn.started)/250)),s=t*t*(3-2*t);
+  return {yaw:turn.from+(turn.to-turn.from)*s,done:t===1};
+}
+export function cameraKeys(keys,dt,scale){
+  const x=Number(keys.has("a"))-Number(keys.has("d")),y=Number(keys.has("w"))-Number(keys.has("s")),n=Math.max(1,Math.hypot(x,y));
+  return {dx:x/n*360*dt,dy:y/n*360*dt,scale:Math.max(12,Math.min(48,scale*Math.exp((Number(keys.has("x"))-Number(keys.has("z")))*dt*1.5)))};
+}

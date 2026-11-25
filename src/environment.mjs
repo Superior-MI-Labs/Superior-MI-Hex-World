@@ -30,7 +30,8 @@ export function validateLightSource(l){
 // Local fill height is a fraction of the cell, not a second solid shape.
 export function validateWater(w){
   assert(record(w)&&finite(w.fill,0,1)&&Array.isArray(w.flow_ft_s??[0,0])&&(w.flow_ft_s??[0,0]).length===2&&(w.flow_ft_s??[0,0]).every(v=>finite(v,-30,30))&&Math.hypot(...(w.flow_ft_s??[0,0]))<=30,"Invalid water component");
-  return {fill:w.fill,flow_ft_s:[...(w.flow_ft_s??[0,0])]};
+  assert(w.fixed===undefined||typeof w.fixed==="boolean","Invalid fixed water setting");
+  return {fill:w.fill,flow_ft_s:[...(w.flow_ft_s??[0,0])],...(w.fixed===true?{fixed:true}:{})};
 }
 export function validateEnvironment(e={wind:CALM,zones:[]}){
   assert(record(e)&&Array.isArray(e.zones??[])&&(e.zones??[]).length<=128,"Invalid environment");

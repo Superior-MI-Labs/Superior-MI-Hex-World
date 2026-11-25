@@ -42,8 +42,11 @@ void main(){
     float deep=1.0-exp(-depth*.5);
     vec3 base=mix(vec3(.25,.66,.63),vec3(.035,.23,.42),deep);
     base+=vec3(.12,.20,.23)*pow(ripple,6.0);
+    if(v_rim<0.0)base=mix(base,vec3(.78,.93,.91),(1.0-smoothstep(.02,.28,depth))*.48*pow(ripple,2.0));
+    else base=mix(base,vec3(.55,.84,.88),.15+.15*ripple);
     color=vec4(base*(vec3(v_shade)+localLight()),mix(.34,.86,deep));
   }
+  else if(u_mode==7){color=vec4(.13,.88,1.0,.58*pow(1.0-v_uv.y,1.5));}
   else if(u_mode==5){if(any(lessThan(v_uv,vec2(0.0)))||any(greaterThan(v_uv,vec2(1.0))))discard;color=vec4(0.0,0.0,0.0,t.a*v_color.r);}
   else {
     vec3 base=v_color;
@@ -134,7 +137,7 @@ export function createRenderer(canvas){
     return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
-  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],visualTime=0}={}){
+  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(waterTime,visualTime);
     const lights=pointLights.slice(0,MAX_POINT_LIGHTS);
@@ -146,9 +149,9 @@ export function createRenderer(canvas){
     gl.uniform3fv(uniforms.u_leaf_color,transitions.leaf_color??[.65,.34,.12]);gl.uniform3fv(uniforms.u_snow_color,transitions.snow_color??[.91,.94,.97]);gl.uniform3fv(uniforms.u_scorch_color,transitions.scorch_color??[.15,.13,.11]);
     gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.depthMask(true);gl.disable(gl.BLEND);
     const projected=faces.map(f=>({f,p:f.points.map(view)})),actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
-    const waterProjected=water.map(f=>({f,p:f.points.map(view)}));
+    const waterProjected=water.map(f=>({f,p:f.points.map(view)})),walls=selectionWalls.map(f=>({f,p:f.points.map(view)}));
     let low=Infinity,high=-Infinity;
-    for(const p of [...projected.flatMap(f=>f.p),...actors.flatMap(a=>a.quad),...waterProjected.flatMap(f=>f.p)]){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
+    for(const p of [...projected.flatMap(f=>f.p),...actors.flatMap(a=>a.quad),...waterProjected.flatMap(f=>f.p),...walls.flatMap(f=>f.p)]){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
     const range=Math.max(1,high-low),center=(low+high)/2;
     const pack=(out,p,color,uv,cover=[0,0,0],rim=-1,maskUV=uv,weights=[1,0,0,0],shade=1,world=[0,0,0])=>out.push(2*p.x/canvas.width-1,1-2*p.y/canvas.height,-(p.depth-center)*1.8/range,...color,...uv,...cover,rim,...maskUV,...weights,shade,...world);
     const batchesTerrain=new Map();
@@ -193,9 +196,10 @@ export function createRenderer(canvas){
     if(waterProjected.length&&!debug){
       const data=[],shade=light?light.ambient+(1-light.ambient)*Math.max(0,light.direction[2]/lightLength):1;
       waterProjected.sort((a,b)=>a.p.reduce((s,p)=>s+p.depth,0)-b.p.reduce((s,p)=>s+p.depth,0));
-      for(const {f,p} of waterProjected)for(let i=0;i<3;i++)pack(data,p[i],[1,1,1],[0,0],[...f.flow,f.depth[i]],-1,undefined,undefined,shade,f.points[i]);
+      for(const {f,p} of waterProjected)for(let i=0;i<3;i++)pack(data,p[i],[1,1,1],[0,0],[...f.flow,f.depth[i]],f.kind==="water-side"?0:-1,undefined,undefined,shade,f.points[i]);
       gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,ground,6);gl.depthMask(true);gl.disable(gl.BLEND);
     }
+    if(walls.length){const data=[];for(const {f,p} of walls)for(let i=0;i<3;i++)pack(data,p[i],[1,1,1],[0,f.fade[i]]);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,ground,7);gl.depthMask(true);gl.disable(gl.BLEND);}
     for(const [image,record] of spriteTextures)if(!used.has(image)){gl.deleteTexture(record.tex);spriteTextures.delete(image);}
 
   }
