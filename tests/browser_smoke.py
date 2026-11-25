@@ -349,7 +349,8 @@ with sync_playwright() as p:
     page.locator("#worldMode").select_option("exploration")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_mode==='exploration'",timeout=60000)
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).performance.terrain_cache_hit===true",timeout=60000)
-    print("MEADOW_PROFILE",page.evaluate("JSON.parse(document.querySelector('#status').textContent).performance"))
+    page.wait_for_function("(()=>{const p=JSON.parse(document.querySelector('#status').textContent).performance;return p.terrain_cache_hit===true&&p.terrain_uploads===0&&p.terrain_ms<20})()",timeout=60000)
+    print("MEADOW_PROFILE_SETTLED",page.evaluate("JSON.parse(document.querySelector('#status').textContent).performance"))
     initial=page.evaluate("JSON.parse(document.querySelector('#status').textContent).resident_chunks")
     page.get_by_role("button",name="Half",exact=True).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===1)")
@@ -546,6 +547,7 @@ with sync_playwright() as p:
     assert json.loads(Path(flow_save.value.path()).read_text())["world"]["environment"]["water_simulation"] is True
     # Verify keyboard controls and actual batch edits through pointer selection.
     page.goto("http://127.0.0.1:8000/")
+    page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_mode==='island'")
     scene=page.locator("#scene")
     scene.scroll_into_view_if_needed()
@@ -561,6 +563,10 @@ with sync_playwright() as p:
     data=json.loads(Path(batch.value.path()).read_text())
     cells={tuple(c["address"][i]*16+v for i,v in enumerate(e["local"])):e["value"] for c in data["chunks"] for e in c["cells"]}
     assert all(cells[a]["shape"]["upper"]==[1]*7 for a in [(0,0,0),(1,0,0)])
+    page.locator("#undoEdit").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===2)")
+    page.locator("#redoEdit").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===1)")
     page.locator("#clearSelection").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selection.length===1")
     scene.focus()

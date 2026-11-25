@@ -47,3 +47,54 @@ export function selectionEdges(world,addresses,grid){
   }
   return out;
 }
+
+// Selection brushes operate on known cells only, at one explicit layer.
+export function selectionBrush(world,center,radius,displayed=()=>true){
+  if(!Number.isInteger(radius)||radius<0||radius>8)throw Error("Invalid brush radius");
+  const [q,r,z]=center,out=[];
+  for(let x=-radius;x<=radius;x++)for(let y=Math.max(-radius,-x-radius);y<=Math.min(radius,-x+radius);y++){
+    const a=[q+x,r+y,z];if(a.every(Number.isSafeInteger)&&world.get(...a)&&displayed(a))out.push(a);
+  }
+  return out;
+}
+export function mergeSelection(current,brush,extend){
+  if(brush.length===1)return selectCell(current,brush[0],extend);
+  const out=new Map((extend?current:[]).map(a=>[a.join(","),a]));
+  for(const a of brush)out.set(a.join(","),a);
+  if(out.size>MAX_SELECTION)throw Error("Selection limit reached");
+  return [...out.values()];
+}
+// The editor owns transient command history; the World remains authoritative.
+// Commands contain just validated cell changes, not whole-world copies.
+export class CellEditHistory{
+  #undo=[];#redo=[];#world;
+  constructor(world){this.#world=world;}
+  get canUndo(){return !!this.#undo.length;}
+  get canRedo(){return !!this.#redo.length;}
+  get counts(){return {undo:this.#undo.length,redo:this.#redo.length};}
+  apply(edits,label="Cell edit"){
+    if(!Array.isArray(edits)||edits.length>4096)throw Error("Editor command exceeds cell budget");
+    const seen=new Set(),before=edits.map(({address})=>{
+      const key=address.join(",");if(seen.has(key))throw Error("Duplicate command address");seen.add(key);
+      const value=this.#world.get(...address);if(!value)throw Error("Unknown command cell");return {address:[...address],value};
+    });
+    this.#world.apply(edits);
+    const after=before.map(({address})=>({address,value:this.#world.get(...address)}));
+    const changed=before.map((v,i)=>JSON.stringify(v.value)!==JSON.stringify(after[i].value));
+    if(!changed.some(Boolean))return false;
+    this.#undo.push({label,before:before.filter((_,i)=>changed[i]),after:after.filter((_,i)=>changed[i])});
+    if(this.#undo.length>40)this.#undo.shift();
+    this.#redo=[];
+    return true;
+  }
+  #replay(source,target,reverse){
+    const command=source.at(-1);if(!command)return null;
+    const expected=reverse?command.after:command.before,desired=reverse?command.before:command.after;
+    // Simulation or another tool may have changed these cells since editing.
+    // Refuse stale history rather than silently overwrite authoritative state.
+    if(expected.some(e=>JSON.stringify(this.#world.get(...e.address))!==JSON.stringify(e.value)))throw Error("History conflict: cell changed since command");
+    this.#world.apply(desired);source.pop();target.push(command);return command.label;
+  }
+  undo(){return this.#replay(this.#undo,this.#redo,true);}
+  redo(){return this.#replay(this.#redo,this.#undo,false);}
+}

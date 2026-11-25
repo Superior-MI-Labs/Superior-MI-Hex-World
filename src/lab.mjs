@@ -1,9 +1,9 @@
 import {World,Clock,effect,effectActive,physicalPosition} from "./core.mjs";
 import {vertices,uniformShape,sampleSurface,hasVolume} from "./geometry.mjs";
-import {editVertex,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
+import {planVertexEdit,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
 import {buildWaterSurfaces,stepWater,waterTicks} from "./water.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
-import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectCell,selectionEdges} from "./editor.mjs";
+import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,selectionBrush,mergeSelection,CellEditHistory} from "./editor.mjs";
 import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
@@ -20,7 +20,7 @@ import {objectVolumes} from "./collision.mjs";
 import {buildScatterPlan,promoteSample} from "./scatter.mjs";
 import {CALM,validateWater,DEFAULT_LIGHTING,validateLighting,validateLightSource,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend} from "./environment.mjs";
 import {validateInteractions,interactionTags,cellTarget,entityTarget,contactResponse,bendBillboard} from "./interactions.mjs";
-import {validatePrefab,planPrefab,placePrefab,capturePrefab} from "./prefabs.mjs";
+import {validatePrefab,planPrefab,capturePrefab} from "./prefabs.mjs";
 import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
@@ -35,7 +35,7 @@ let world,grid,clock=new Clock(base.simulation),yaw=0,last,drag=null,selected=[0
 const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
 const islandDomain=island.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
 let ground=island,domain=islandDomain,worldMode="island",regionKey="",cameraKey="",activeChunks=0;
-let regionBounds=null,wireCells=new Map();
+let regionBounds=null,wireCells=new Map(),history=null;
 let renderYaw=0,turn=null,selection=[[0,0,0]],keys=new Set(),visibleCache=null,grassCache=new WeakMap(),shadowCache=null;
 function camera(){return {yaw:renderYaw,scale,width:canvas.width,height:canvas.height,panX,panY};}
 function refreshRegion(force=false){
@@ -109,7 +109,7 @@ function setInteractions(profile){interactions=validateInteractions(profile);con
 $("importInteractions").onchange=async()=>{try{const f=$("importInteractions").files[0];if(!f)return;if(f.size>256000)throw Error("Interaction profile exceeds 256 KB");setInteractions(JSON.parse(await f.text()));}catch(e){$("interactionProfileStatus").textContent="Previous profile retained: "+e.message;}finally{$("importInteractions").value="";}};
 $("resetInteractions").onclick=()=>setInteractions(defaultInteractions);
 function showEvents(events){interactionEvents=events;const signals=events.flatMap(e=>e.signals.map(s=>s.signal));$("interactionStatus").textContent=events.length+" spatial events; "+(signals.join(", ")||"no matching signals");}
-$("setCellTags").onclick=()=>{try{const c=world.get(...selected);world.set(...selected,{...c,components:{...c.components,interaction_tags:parseTags($("cellTags").value)}});dirty=true;sync();}catch(e){$("interactionStatus").textContent=e.message;}};
+$("setCellTags").onclick=()=>{try{const tags=parseTags($("cellTags").value);editSelected(c=>({...c,components:{...c.components,interaction_tags:tags}}),"Cell tags");}catch(e){$("interactionStatus").textContent=e.message;}};
 $("setObjectTags").onclick=()=>{try{world.setEntityTags($("objects").value,parseTags($("objectTags").value));syncConstruction();}catch(e){$("interactionStatus").textContent=e.message;}};
 const usingObjects=new Set();
 async function useSelected(targetId=null){
@@ -194,7 +194,7 @@ function syncConstruction(){
   syncCollider();syncObjectLight();syncAppearance();syncMovement();
 }
 for(const key of ["prefab","prefabRotation","prefabOffset"])$(key).onchange=syncConstruction;
-$("placePrefab").onclick=()=>{try{const {p,anchor,turns}=prefabPlan();if($("placePrefab").disabled)return;placePrefab(world,p,anchor,turns);dirty=true;sync();$("message").textContent=p.name+" placed";}catch(e){$("message").textContent=e.message;}};
+$("placePrefab").onclick=()=>{try{const {p,plan}=prefabPlan();if($("placePrefab").disabled)return;if(plan.conflicts.length)throw Error("Prefab blocked");commitCells(plan.edits,"Place "+p.name);$("message").textContent=p.name+" placed";}catch(e){$("message").textContent=e.message;}};
 $("objects").onchange=()=>{const e=world.getEntity($("objects").value);$("objectTags").value=e?.interaction_tags?.join(", ")??"";$("objectOrientation").textContent=e?((e.orientation_steps??0)*60)+"°":"No object";syncCollider();syncObjectLight();syncAppearance();};
 function syncObjectLight(){
   const e=world.getEntity($("objects").value),l=e?.light;
@@ -332,15 +332,18 @@ function refreshVertexOptions(){
     if(keys.includes(old))vertexSelect.value=old;
   }
 }
-function selectAddress(a,key,extend=false){try{selection=selectCell(selection,a,extend);selected=selection.find(v=>v.join(",")===a.join(","))??selection.at(-1);selectFace(key);}catch(e){$("message").textContent=e.message;}}
-function editSelected(fn){world.apply(selection.map(address=>({address,value:fn(world.get(...address),address)})));dirty=true;sync();}
+function selectAddress(a,key,extend=false){try{selection=mergeSelection(selection,selectionBrush(world,a,Number($("brushRadius").value),displayedAddress),extend);selected=selection.find(v=>v.join(",")===a.join(","))??selection.at(-1);selectFace(key);}catch(e){$("message").textContent=e.message;}}
+function commitCells(edits,label){if(history.apply(edits,label))dirty=true;sync();}
+function editSelected(fn,label="Selection edit"){commitCells(selection.map(address=>({address,value:fn(world.get(...address),address)})),label);}
+function replayEdit(undo){try{const label=undo?history.undo():history.redo();if(label){dirty=true;sync();$("historyStatus").textContent=(undo?"Undid ":"Redid ")+label;}}catch(e){$("historyStatus").textContent=e.message;}}
+$("undoEdit").onclick=()=>replayEdit(true);$("redoEdit").onclick=()=>replayEdit(false);
 function selectFace(key){faceSelect.value=key;sync();}
 
 const get=()=>world.get(...selected).shape;
 function reset(){
   const n=base.grid.geometry_subdivisions;grid={...base.grid};
   world=worldMode==="settlement"?buildSettlement(base,prefabCatalog,demoVisual):new World(worldMode==="exploration"?explorationConfig(base):base);
-  meshCache=new TerrainFaceCache(world);playback.clear();showEvents([]);selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";
+  history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);playback.clear();showEvents([]);selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";
   if(worldMode==="exploration"){yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;refreshRegion(true);}
   else if(worldMode==="settlement"){ground=settlementGround;domain=settlementDomain;activeChunks=0;yaw=0;scale=16;panX=0;panY=65;$("zoom").value=16;}
   else{ground=island;domain=islandDomain;activeChunks=0;for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));}
@@ -350,7 +353,7 @@ function reset(){
 $("worldMode").onchange=()=>{const next=$("worldMode").value;if(next===worldMode)return;if(!confirm("Start a new world? Export your current world first if you want to keep it.")){$("worldMode").value=worldMode;return;}worldMode=next;reset();};
 function sync(){
   selection=selection.filter(a=>displayedAddress(a));if(!selection.some(a=>a.join(",")===selected.join(",")))selection=[[...selected]];
-  $("selectionCount").textContent=selection.length+" selected";$("level").value=selected[2];refreshVertexOptions();
+  $("selectionCount").textContent=selection.length+" selected";$("undoEdit").disabled=!history.canUndo;$("redoEdit").disabled=!history.canRedo;$("historyStatus").textContent=history.counts.undo+" undo · "+history.counts.redo+" redo";$("level").value=selected[2];refreshVertexOptions();
   const n=grid.geometry_subdivisions,{layer,index}=activeRef(),s=get(),height=s[layer][index];
   // Keep the legal range visible. The core still enforces it for pointer drags.
   const slider=$("height");let limits={min:0,max:n},blocked=false;
@@ -368,7 +371,7 @@ function sync(){
   syncConstruction();
 }
 function move(value,ref=activeRef()){
-  const n=grid.geometry_subdivisions;try{editVertex(world,selected,ref.index,ref.layer,Math.max(0,Math.min(n,Math.round(value))),{connected:$("connected").checked});dirty=true;$("message").textContent="";}catch(e){$("message").textContent=e.message;}sync();
+  const n=grid.geometry_subdivisions;try{const plan=planVertexEdit(world,selected,ref.index,ref.layer,Math.max(0,Math.min(n,Math.round(value))),{connected:$("connected").checked});commitCells(plan.edits,"Vertex edit");$("message").textContent="";}catch(e){$("message").textContent=e.message;}sync();
 }
 function set(s){const material=$("material").value;editSelected(old=>hasVolume(s)?{...old,material:old.material==="air"?material:old.material,shape:s}:{...old,material:"air",shape:s,components:Object.fromEntries(Object.entries(old.components??{}).filter(([k])=>k!=="surface"))});}
 function updateWater(clear=false){try{const w=clear?null:validateWater({fill:Number($("waterFill").value),flow_ft_s:[Number($("waterFlowX").value),Number($("waterFlowY").value)],fixed:$("waterFixed").checked});editSelected(c=>{const {water,...components}=c.components??{};if(w?.fill)components.water=w;return {...c,components};});}catch(e){$("waterStatus").textContent=e.message;}}
@@ -412,7 +415,7 @@ function demoSurface(kind){
     if(patch){if(kind==="snow")s.snow=1;else if(kind==="leaves"){s.leaves=1;s.health=.35;}else if(kind==="scorch"){s.scorch=1;s.growth=0;}else if(kind==="sand"){material="sand";s.growth=0;}else if(kind==="wet")s.moisture=1;}
     edits.push({address,value:withSurface({...c,material},s)});
   }
-  world.apply(edits);dirty=true;sync();
+  commitCells(edits,"Surface demonstration");
 }
 $("transitionDemo").onchange=()=>{const k=$("transitionDemo").value;if(k)demoSurface(k);$("transitionDemo").value="";};
 $("reset").onclick=()=>{if(worldMode!=="island"&&!confirm("Reset world and discard edits?"))return;reset();};
@@ -426,7 +429,7 @@ $("load").onchange=async()=>{try{
   const next=World.restore(JSON.parse(await file.text())),g=next.config.grid,cfg=next.config,generated=cfg.generation?.profile===EXPLORATION_PROFILE,settlement=cfg.scene===SETTLEMENT;
   if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||g.chunk_size.some((n,i)=>n!==base.grid.chunk_size[i])||(!generated&&(cfg.generation||!((settlement?settlementDomain:islandDomain).every(a=>next.get(...a))))))throw Error("Unsupported laboratory world profile");
   if(generated){if(typeof cfg.generation.seed!=="string"||!cfg.generation.seed)throw Error("Invalid generation seed");loadViewport(next,viewportBounds({yaw:0,scale:24,width:canvas.width,height:canvas.height,panX:0,panY:50},g,undefined,120));}
-  world=next;meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
+  world=next;history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
   yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;$("worldMode").value=worldMode;
   if(generated)refreshRegion(true);else{ground=settlement?settlementGround:island;domain=settlement?settlementDomain:islandDomain;activeChunks=0;}
   syncWind();syncClimate();syncLighting();syncWaterMode();sync();$("message").textContent="World imported";
@@ -440,7 +443,7 @@ function path(p){ctx.beginPath();p.forEach(({x,y},i)=>i?ctx.lineTo(x,y):ctx.move
 function polygon(p,fill,stroke){path(p);if(fill){ctx.fillStyle=fill;ctx.fill();}if(stroke){ctx.strokeStyle=stroke;ctx.stroke();}}
 function pos(e){const b=canvas.getBoundingClientRect();return [(e.clientX-b.left)*canvas.width/b.width,(e.clientY-b.top)*canvas.height/b.height];}
 
-canvas.onpointerdown=e=>{const [x,y]=pos(e);if(e.button===1||e.button===2){e.preventDefault();drag={id:e.pointerId,pan:true,x,y,panX,panY};canvas.setPointerCapture(e.pointerId);return;}if(e.button!==0)return;canvas.focus({preventScroll:true});const extend=e.shiftKey||e.ctrlKey||e.metaKey;const handle=extend?null:nearestHandle(handles,x,y,vertexSelect.value);
+canvas.onpointerdown=e=>{const [x,y]=pos(e);if(e.button===1||e.button===2){e.preventDefault();drag={id:e.pointerId,pan:true,x,y,panX,panY};canvas.setPointerCapture(e.pointerId);return;}if(e.button!==0)return;canvas.focus({preventScroll:true});const extend=e.shiftKey||e.ctrlKey||e.metaKey;const handle=extend||Number($("brushRadius").value)>0?null:nearestHandle(handles,x,y,vertexSelect.value);
   if(handle){vertexSelect.value=handleKey(handle);sync();drag={id:e.pointerId,y,h:get()[handle.layer][handle.index],ref:{layer:handle.layer,index:handle.index}};canvas.setPointerCapture(e.pointerId);return;}
   const hit=pickFace(faces,x,y,view);if(hit){selectAddress(hit.address,faceKey(hit),extend);return;}
   // Empty cells can be selected at their base footprint when not occluded.
@@ -455,7 +458,7 @@ function rotateCamera(delta){yaw=wrapYaw(yaw+delta);turn=turnCamera(renderYaw,ya
 $("clearSelection").onclick=()=>{selection=[[...selected]];sync();};
 const shortcuts=new Set(["q","e","w","a","s","d","z","x"]);
 function editableTarget(t){return t?.isContentEditable||["INPUT","SELECT","TEXTAREA"].includes(t?.tagName);}
-window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(editableTarget(e.target)||e.ctrlKey||e.metaKey||e.altKey||!shortcuts.has(k))return;e.preventDefault();if((k==="q"||k==="e")&&!e.repeat)rotateCamera(k==="q"?-1:1);else keys.add(k);});
+window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(editableTarget(e.target))return;if((e.ctrlKey||e.metaKey)&&!e.altKey&&(k==="z"||k==="y")){e.preventDefault();if(!e.repeat)replayEdit(k==="z"&&!e.shiftKey);return;}if(e.ctrlKey||e.metaKey||e.altKey||!shortcuts.has(k))return;e.preventDefault();if((k==="q"||k==="e")&&!e.repeat)rotateCamera(k==="q"?-1:1);else keys.add(k);});
 window.addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
 window.addEventListener("blur",()=>keys.clear());
 document.addEventListener("focusin",e=>{if(editableTarget(e.target))keys.clear();});
@@ -467,7 +470,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const terrainMS=performance.now()-terrainStart,spritesStart=performance.now();
   const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked,poses=new Map(),contacts=[];
   for(const [id,motion] of playback){const pose=sampleRoute(motion.points,(clock.visual-motion.started)*10);if(pose.done){playback.delete(id);continue;}poses.set(id,pose);contacts.push({id,point:pose.point});}
-  let bent=0,windBent=0,animatedFoliage=0,seasonalFoliage=0;const field=world.environment,windEnabled=$("windVisual").checked,windCache=new Map(),climateCache=new Map(),updated=new Set();
+  let bent=0,windBent=0,animatedFoliage=0,seasonalFoliage=0;const field=world.environment,windEnabled=$("windVisual").checked,windCache=new Map(),climateCache=new Map(),updated=new Set(),scatterVisualCache=new Map(),vegetationVisualCache=new Map();
   function climateFor(address){const k=address.join(",");if(!climateCache.has(k))climateCache.set(k,climateAt(field,address));return climateCache.get(k);}
   function windFor(address){if(!windEnabled)return CALM;const key=address.join(",");if(!windCache.has(key))windCache.set(key,windAt(field,address));return windCache.get(key);}
   function flex(points,root,height,response,exclude=null,wind=CALM,capability=null){
@@ -496,7 +499,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   scatterChoices=choices;$("promoteScatter").disabled=!choices.length;
   if(styled&&$("scatter").checked)for(const sample of scatterPlan){
     if(scale<=sample.lod_px||!displayedAddress(sample.address))continue;
-    const wind=windFor(sample.address),v=scatterRaster(art,sample,wind,climateFor(sample.address).season,yaw);if(!v)continue;
+    const wind=windFor(sample.address),season=climateFor(sample.address).season,k=JSON.stringify([sample.family,sample.variant,sample.orientation,season,wind.velocity_ft_s]);if(!scatterVisualCache.has(k))scatterVisualCache.set(k,scatterRaster(art,sample,wind,season,yaw));const v=scatterVisualCache.get(k);if(!v)continue;
     const {r,height}=v,p=sample.point,w=height*r.pixelWidth/r.pixelHeight,screen=view(p),margin=scale*Math.max(w,height)*2;
     if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
     animateRaster(r);
@@ -507,7 +510,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     if(f.kind!=="top"||f.vegetation<=0)continue;
     if(styled){
       let cached=grassCache.get(f);if(!cached||cached.art!==art||cached.scale!==scale){cached={art,scale,samples:vegetationSamples(f,seed,art.profile,scale)};grassCache.set(f,cached);}for(const sample of cached.samples){
-        const wind=windFor(f.address),season=climateFor(f.address).season,r=vegetationRaster(art,sample.variant,wind,season);if(!r)continue;animateRaster(r);const seasonal=art.seasonalRasters.get(season)?.get(sample.variant);if(seasonal)seasonalFoliage++;if(r!==(seasonal??art.vegetation.get(sample.variant)))animatedFoliage++;
+        const wind=windFor(f.address),season=climateFor(f.address).season,k=JSON.stringify([sample.variant,season,wind.velocity_ft_s]);if(!vegetationVisualCache.has(k))vegetationVisualCache.set(k,vegetationRaster(art,sample.variant,wind,season));const r=vegetationVisualCache.get(k);if(!r)continue;animateRaster(r);const seasonal=art.seasonalRasters.get(season)?.get(sample.variant);if(seasonal)seasonalFoliage++;if(r!==(seasonal??art.vegetation.get(sample.variant)))animatedFoliage++;
         sprites.push({image:r.image,revision:r.revision,points:flex(billboard(sample.point,renderYaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot),sample.point,sample.height,contacts.length?cellContact(f.address):null,null,wind,vegetationWind(art.profile,sample.variant,season))});
       }
     }else if(stableUnit(seed,f.address,"tuft"+f.triangle)<=f.vegetation){

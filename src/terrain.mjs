@@ -20,7 +20,7 @@ function vertexEditPlan(world,address,index,layer,connected){
 export function vertexLimits(world,address,index,layer,{connected=false}={}){
   const {min,max}=vertexEditPlan(world,address,index,layer,connected);return {min,max};
 }
-export function editVertex(world,address,index,layer,height,{connected=false,material="soil"}={}){
+export function planVertexEdit(world,address,index,layer,height,{connected=false,material="soil"}={}){
   const n=world.config.grid.geometry_subdivisions;
   assert(Number.isInteger(height)&&height>=0&&height<=n,"Invalid edit height");
   const {targets,min,max}=vertexEditPlan(world,address,index,layer,connected);
@@ -31,7 +31,9 @@ export function editVertex(world,address,index,layer,height,{connected=false,mat
     if(!hasVolume(value.shape)){value.material="air";if(value.components)delete value.components.surface;}
     return {address:ref.address,value};
   });
-  world.apply(edits);return {height:h,addresses:edits.map(e=>e.address)};
+  return {height:h,edits};
+}
+export function editVertex(world,address,index,layer,height,options){const plan=planVertexEdit(world,address,index,layer,height,options);world.apply(plan.edits);return {height:plan.height,addresses:plan.edits.map(e=>e.address)};
 }
 // Mesh is derived from world state; no duplicate terrain store.
 export function cellFaces(world,address,grid=world.config.grid){

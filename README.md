@@ -76,3 +76,6 @@ v0.29: opt-in conservative floor-connected water transfer, gravity, shared-edge 
 
 
 v0.30: multi-cell editor, smooth keyboard camera, fixed animated waterways, exposed water sides and frame-stage performance diagnostics.
+
+
+v0.31: bounded reversible cell commands, selection brushes, shared vertex/prefab planning and settled meadow diagnostics.
