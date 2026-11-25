@@ -7,7 +7,7 @@ const positive=n=>Number.isFinite(n)&&n>0;
 const id=s=>typeof s==="string"&&s.length>0&&s.length<=2048;
 const own=(o,k)=>Object.hasOwn(o??{},k);
 export function artBinding(value,defaultManifest){
-  const b=typeof value==="string"?{asset:value,manifest:defaultManifest}:value;
+  const b=typeof value==="string"?{asset:value,manifest:defaultManifest}:value&&{...value,manifest:value.manifest??defaultManifest};
   assert(b&&id(b.asset)&&id(b.manifest),"Invalid art binding");
   const url=new URL(b.manifest,"https://local.invalid/");assert(["http:","https:"].includes(url.protocol)&&!url.username&&!url.password,"Invalid art manifest URL");
   assert(b.state===undefined||b.state===null||id(b.state),"Invalid art state");

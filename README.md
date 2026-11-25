@@ -37,3 +37,6 @@ v0.16: persistent spatial wind, local shelter zones, authored Atlas animation st
 
 
 v0.17: per-material Atlas texture blending, full-color albedo, persistent climate fields and seasonal foliage bindings.
+
+
+v0.18: persistent object orientation and six-view Atlas bindings; seasonal default-manifest inheritance correction.

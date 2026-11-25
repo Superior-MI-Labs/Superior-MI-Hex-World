@@ -13,14 +13,16 @@ export function spriteBinding(b){
   const height_ft=b.height_ft??4;
   assert(Number.isFinite(height_ft)&&height_ft>0&&height_ft<=100,"Invalid sprite height");
   assert(b.walk_state===undefined||b.walk_state===null||id(b.walk_state),"Invalid walking state");
-  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
+  assert(b.views===undefined||(Array.isArray(b.views)&&b.views.length===6&&b.views.every(id)),"Directional binding requires six Atlas asset IDs");
+  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.views!==undefined?{views:[...b.views]}:{}),...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
 }
 export function validateEntity(e){
   assert(e&&id(e.id)&&validAddress(e.address),"Invalid entity");
   assert(e.anchor==="surface"||e.anchor==="cell","Invalid anchor");
   const offset=e.offset_ft??[0,0,0];
   assert(Array.isArray(offset)&&offset.length===3&&offset.every(v=>Number.isFinite(v)&&Math.abs(v)<=100),"Invalid entity offset");
-  return {...structuredClone(e),address:[...e.address],offset_ft:[...offset],visual:spriteBinding(e.visual),...(e.interaction_tags!==undefined?{interaction_tags:interactionTags(e.interaction_tags)}:{})};
+  assert(e.orientation_steps===undefined||(Number.isInteger(e.orientation_steps)&&e.orientation_steps>=0&&e.orientation_steps<6),"Invalid object orientation");
+  return {...structuredClone(e),address:[...e.address],offset_ft:[...offset],...(e.orientation_steps!==undefined?{orientation_steps:e.orientation_steps}:{}),visual:spriteBinding(e.visual),...(e.interaction_tags!==undefined?{interaction_tags:interactionTags(e.interaction_tags)}:{})};
 }
 // Surface anchored objects follow terrain edits; if their support is removed,
 // they remain saved but unresolved. Gravity/collision belong to later systems.
@@ -37,3 +39,12 @@ export function placeObject(world,entity){
   world.putEntity(e);return e;
 }
 export const visualKey=b=>JSON.stringify(spriteBinding(b));
+
+// Camera yaw 0 looks from world +Y. Positive steps advance the camera
+// towards +X. View 0 is the front of an object facing its declared heading.
+// Resolve only the visual binding; never mutate world orientation.
+export function directionalBinding(visual,cameraYaw,orientation=0){
+  assert(Number.isInteger(cameraYaw)&&Number.isInteger(orientation),"Invalid view orientation");
+  const {views,...binding}=spriteBinding(visual);
+  return views?{...binding,asset:views[((cameraYaw-orientation)%6+6)%6]}:binding;
+}

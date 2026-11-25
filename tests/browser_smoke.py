@@ -10,6 +10,21 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).atlas_sprite")
+    # Directional fixture uses existing measured grass regions as view IDs, not authored view art.
+    vb={"manifest":"./examples/meadow-art/manifest.json","asset":"smi.hex.grass.01","height_ft":2,"views":["smi.hex.grass.01","smi.hex.grass.02","smi.hex.grass.03","smi.hex.grass.01","smi.hex.grass.02","smi.hex.grass.03"]}
+    page.locator("#importObjectBinding").set_input_files({"name":"views.json","mimeType":"application/json","buffer":json.dumps(vb).encode()})
+    page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
+    page.locator("#placeActor").click()
+    page.locator("#objects").select_option(index=1)
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_object_view==='smi.hex.grass.01'")
+    page.locator("#rotateObject").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_object_view==='smi.hex.grass.03'")
+    page.locator("#rotate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_object_view==='smi.hex.grass.01'")
+    page.locator("#removeObject").click()
+    page.locator("#resetView").click()
+    page.locator("#loadActor").click()
+    page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     # Verify actual GPU depth with deliberately overlapping triangles and both orders.
     result=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');

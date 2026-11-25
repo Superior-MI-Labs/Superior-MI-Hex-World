@@ -1,0 +1,11 @@
+# Directional object art: Hex World host binding
+
+Atlas regions, sequences and state sets remain canonical. Hex World supports a single camera-facing default asset or six explicit directional IDs from the same manifest. The optional `views` array is part of the Hex World visual binding, not the Atlas schema. View 0 is front; indices 1–5 correspond to positive camera yaw increments of 60 degrees. At world yaw 0 the camera looks from +Y towards the origin; positive yaw approaches +X. Entity orientation_steps is a persistent heading in the same convention, independent of the camera. The selected view is (camera yaw - heading + 6) modulo 6. At heading 0 and yaw 0 the object's front is visible. Use 35.264-degree orthographic elevation. No automatic mirror or interpolation.
+
+Example (replace the manifest and IDs with the actual pack):
+```json
+{"manifest":"https://example.org/manifest.json","asset":"chest.front","height_ft":3,"state":"closed","views":["chest.front","chest.view1","chest.view2","chest.view3","chest.view4","chest.view5"]}
+```
+Each view may be a region, sequence, or state set. When declaring state on a directional binding, each view must be a state set with that state. Optional walk_state and wind states also must exist for every view. Match physical scale, logical canvas, trim and root pivot across views; verify all requested view/state combinations before publication. For symmetric objects explicitly reuse the same ID where appropriate. The laboratory can import an object-binding JSON, place it and independently rotate the object and camera. Relative manifest URLs resolve against the host page, not the imported JSON file.
+
+Atlas remains host-neutral: this six-view resolver is specific to Hex World. General arbitrary-angle capability metadata, composition inputs, slots/presets and chest inventory are not yet integrated in the Hex World adapter. Do not bake every loot/state/view combination as a workaround; use the existing Atlas composition/slot contract for production design and qualify host compatibility separately. Directional fixture tests reuse grass regions only to exercise ID selection, not to demonstrate true directional artwork.

@@ -34,3 +34,5 @@ For responsive brush, foliage, switches, doors and effects, read [interaction as
 For wind-responsive static or animated sheets, follow [environment artwork bindings](ENVIRONMENT_ART.md). Use canonical Atlas regions, sequences and state sets; capabilities are mapped in Hex World.
 
 Per-material full-color albedo is now supported through style bindings; seasonal vegetation variants can also be supplied using the [environment artwork contract](ENVIRONMENT_ART.md). Ground texture artwork remains unprojected and seamless.
+
+For directional sprites use [Hex World directional binding](DIRECTIONAL_ART.md). The six-view contract is host-specific; the canonical Atlas visual manifest remains unchanged.
