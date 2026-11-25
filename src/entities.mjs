@@ -10,7 +10,8 @@ export function spriteBinding(b){
   assert(b.state===null||b.state===undefined||id(b.state),"Invalid sprite state");
   const height_ft=b.height_ft??4;
   assert(Number.isFinite(height_ft)&&height_ft>0&&height_ft<=100,"Invalid sprite height");
-  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft};
+  assert(b.walk_state===undefined||b.walk_state===null||id(b.walk_state),"Invalid walking state");
+  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.walk_state?{walk_state:b.walk_state}:{})};
 }
 export function validateEntity(e){
   assert(e&&id(e.id)&&validAddress(e.address),"Invalid entity");

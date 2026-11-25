@@ -205,6 +205,33 @@ with sync_playwright() as p:
     assert json.loads(Path(moved.value.path()).read_text())["entities"][0]["address"]==[1,0,0]
     page.locator("#contactShadows").uncheck()
     page.locator("#contactShadows").check()
+    page.locator("#worldMode").select_option("settlement")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_mode==='settlement'")
+    assert page.locator("#cutaway").input_value()=="all"
+    page.locator("#cutaway").select_option("0")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cutaway===0")
+    page.locator("#movingObject").select_option("demo-actor")
+    xy=page.evaluate("""async () => {
+      const {project}=await import('/src/camera.mjs');
+      const camera=JSON.parse(document.querySelector('#status').textContent).camera;
+      return project([0,0,5],camera);
+    }""")
+    box=page.locator("#scene").bounding_box()
+    page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='0,0,0'")
+    page.locator("#checkSight").click()
+    assert page.locator("#sightStatus").text_content()=="clear"
+    page.locator("#previewRoute").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).route_steps===2")
+    page.locator("#moveObject").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).moving_presentations===0")
+    with page.expect_download() as settlement_save:
+        page.locator("#save").click()
+    saved=json.loads(Path(settlement_save.value.path()).read_text())
+    assert saved["world"]["scene"]=="settlement-v1"
+    assert next(e for e in saved["entities"] if e["id"]=="demo-actor")["address"]==[0,0,0]
+    page.locator("#cutaway").select_option("all")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cutaway===null")
     page.screenshot(path="/tmp/hex-world-qa.png",full_page=True)
     assert not errors,errors
     print("GPU depth, Atlas sprite load, vertical construction and browser smoke passed")

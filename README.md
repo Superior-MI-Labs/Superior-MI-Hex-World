@@ -22,3 +22,6 @@ v0.11: explicit prefab capture/export/import, persistent standalone fire and sim
 
 
 v0.12: profile-driven centerline walking, bounded route search, ceiling clearance, persistent relocation and depth-tested terrain contact shadows.
+
+
+v0.13: settlement test scene, non-destructive interior cutaway, geometry-based line-of-sight, route animation and optional Atlas walking state.

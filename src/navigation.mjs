@@ -115,3 +115,32 @@ export function moveObject(world,id,to,profile){
   if(route.ok)world.relocateEntity(id,to);
   return route;
 }
+
+// Presentation follows the same center/edge points as validated walking.
+// The committed entity address remains final even during visual playback.
+export function routeWaypoints(world,path,profile){
+  const p=validateMovement(profile),g=world.config.grid;
+  if(!Array.isArray(path)||!path.length)throw Error("Empty route");
+  const out=[];
+  function add(address,xy,height){
+    const o=physicalPosition(...address,g),point=[o.x+xy[0],o.y+xy[1],height],last=out.at(-1);
+    if(last&&Math.hypot(...point.map((v,i)=>v-last.point[i]))<EPS)return;
+    out.push({address:[...address],point});
+  }
+  const first=standability(world,path[0],p);assert(first.ok,"Invalid route support");add(path[0],[0,0],first.height_ft);
+  for(let i=1;i<path.length;i++){
+    const a=path[i-1],b=path[i];assert(step(world,g,a,b,p).ok,"Route is no longer traversable");
+    const e=EDGE_NEIGHBORS.findIndex(([q,r])=>a[0]+q===b[0]&&a[1]+r===b[1]),sa=support(world,g,a,e),sb=support(world,g,b,oppositeEdge(e));
+    add(a,sa.points[1],sa.feet[1]);add(b,sb.points[1],sb.feet[1]);add(b,[0,0],sb.feet[0]);
+  }
+  return out;
+}
+export function sampleRoute(points,distance){
+  assert(Array.isArray(points)&&points.length&&Number.isFinite(distance)&&distance>=0,"Invalid route sample");
+  for(let i=1;i<points.length;i++){
+    const a=points[i-1],b=points[i],length=Math.hypot(...b.point.map((v,j)=>v-a.point[j]));
+    if(distance<length)return {point:a.point.map((v,j)=>mix(v,b.point[j],distance/length)),address:[...(distance<length/2?a.address:b.address)],done:false};
+    distance-=length;
+  }
+  const last=points.at(-1);return {point:[...last.point],address:[...last.address],done:true};
+}
