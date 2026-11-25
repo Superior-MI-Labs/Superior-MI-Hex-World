@@ -43,7 +43,8 @@ test("settlement has real doorway, roof, one continuous traversable floor and ro
 test("visual route follows shared edge and vertical step; ends at authoritative destination",()=>{
  const w=world();w.set(0,0,0,solid(1));w.set(1,0,0,solid());
  const path=[[0,0,0],[1,0,0]],points=routeWaypoints(w,path,p);
- assert.deepEqual(points.map(v=>v.point.map(x=>Math.round(x*1e8)/1e8)),[[0,0,2.5],[2.5,0,2.5],[2.5,0,5],[5,0,5]].map(a=>a.map(v=>Math.round(v*1e8)/1e8)));
+ const expected=[[0,0,2.5],[2.5,0,2.5],[2.5,0,5],[5,0,5]];assert.equal(points.length,expected.length);
+ for(const [i,v] of points.entries())assert.ok(Math.hypot(...v.point.map((x,j)=>x-expected[i][j]))<1e-8);
  assert.equal(sampleRoute(points,0).done,false);assert.equal(sampleRoute(points,100).done,true);
  assert.deepEqual(sampleRoute(points,100).address,[1,0,0]);assert.ok(Math.abs(sampleRoute(points,3.75).point[2]-3.75)<1e-8);
 });
