@@ -20,6 +20,15 @@ with sync_playwright() as p:
       return [[far,near],[near,far]].map(f=>{r.render(f,view,{pattern:false});return r.readPixel(15,15);});
     }""")
     assert all(c[1]>240 and c[0]<10 for c in result),result
+    assert page.locator("#resolution").count()==0
+    page.get_by_role("button",name="Reactive fire").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.burn===8")
+    page.get_by_role("button",name="Advance 6 seconds").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.burn===8")
+    page.locator("#mode").select_option("manual")
+    page.get_by_role("button",name="Advance 6 seconds").click()
+    page.get_by_role("button",name="Advance 6 seconds").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.scorch===1")
     page.locator("#level").select_option("1")
     page.get_by_role("button",name="Full",exact=True).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected[2]===1 && JSON.parse(document.querySelector('#status').textContent).cell.material==='soil'")

@@ -1,4 +1,5 @@
 import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
+import {surface} from "./materials.mjs";
 export {shape} from "./geometry.mjs";
 // Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
 const int = Number.isSafeInteger;
@@ -12,6 +13,7 @@ export function validateWorld(config) {
   const g=config.grid;
   requireThat(positive(g?.horizontal_ft)&&positive(g?.vertical_ft),"Invalid grid scale");
   validateSubdivisions(g.geometry_subdivisions);
+  requireThat(g.geometry_subdivisions===2,"This world profile requires two geometry subdivisions");
   requireThat(Array.isArray(g.chunk_size)&&g.chunk_size.length===3&&g.chunk_size.every(n=>int(n)&&n>0&&n<=256),"Invalid chunk dimensions");
   requireThat(["frozen","manual","turn-based","real-time","scaled"].includes(config.simulation?.mode)&&positive(config.simulation?.rate),"Invalid clock configuration");
   return copy(config);
@@ -36,7 +38,9 @@ function cell(value, subdivisions) {
   requireThat(typeof value?.material==="string"&&value.material.length>0,"Invalid material");
   const geometry=shape(value.shape,subdivisions);
   requireThat(value.material!=="air"||geometry.upper.every((h,i)=>h===geometry.lower[i]),"Air cannot contain solid geometry");
-  return {...copy(value),shape:geometry};
+  const result={...copy(value),shape:geometry};
+  if(result.components?.surface!==undefined)result.components.surface=surface(result.components.surface);
+  return result;
 }
 export class World {
   #config; #chunks=new Map();

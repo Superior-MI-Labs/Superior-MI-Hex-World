@@ -19,6 +19,7 @@ export function editVertex(world,address,index,layer,height,{connected=false,mat
   const edits=targets.map(({ref,value})=>{
     value.shape[layer][ref.index]=h;
     if(value.material==="air"&&hasVolume(value.shape))value.material=material;
+    if(!hasVolume(value.shape)){value.material="air";if(value.components)delete value.components.surface;}
     return {address:ref.address,value};
   });
   world.apply(edits);return {height:h,addresses:edits.map(e=>e.address)};
