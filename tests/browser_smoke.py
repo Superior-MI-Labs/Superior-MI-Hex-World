@@ -20,6 +20,26 @@ with sync_playwright() as p:
       return [[far,near],[near,far]].map(f=>{r.render(f,view,{pattern:false});return r.readPixel(15,15);});
     }""")
     assert all(c[1]>240 and c[0]<10 for c in result),result
+    # Verify the coverage gradient and exact zero/full endpoints in actual GPU pixels.
+    coverage=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs');
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const attr=(snow,rim=-1)=>({color:[0,1,0],cover:[0,snow,0],rim});
+      const face={points:[[5,5,1],[60,5,1],[5,60,1]],kind:'top',color:[0,1,0]};
+      r.render([{...face,attributes:[attr(0),attr(1),attr(0)]}],view,{pattern:false,debug:true});
+      const gradient=[r.readPixel(8,8),r.readPixel(54,8)];
+      r.render([{...face,attributes:[attr(1),attr(1),attr(1)]}],view,{pattern:false});
+      const snow=r.readPixel(15,15);
+      r.render([{...face,attributes:[attr(0),attr(0),attr(0)]}],view,{pattern:false});
+      const grass=r.readPixel(15,15);
+      r.render([{...face,kind:'side',attributes:[attr(1,0),attr(1,5),attr(1,0)]}],view,{pattern:false,debug:true});
+      return {gradient,snow,grass,rim:[r.readPixel(8,8),r.readPixel(54,8)]};
+    }""")
+    assert coverage["gradient"][0][1]<40 and coverage["gradient"][1][1]>200,coverage
+    assert coverage["snow"][0]>220 and coverage["snow"][2]>235,coverage
+    assert coverage["grass"][1]>240 and coverage["grass"][0]<10,coverage
+    assert coverage["rim"][0][1]>200 and coverage["rim"][1][1]<10,coverage
     page.wait_for_function("document.querySelector('#maskStatus').textContent === 'Atlas transition mask loaded'")
     page.locator("#transitionDemo").select_option("snow")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).transition_triangles > 0")

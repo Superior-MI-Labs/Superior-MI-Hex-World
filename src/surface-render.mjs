@@ -5,7 +5,7 @@ import {appearance,transitionSettings} from "./materials.mjs";
 import {TerrainFaceCache} from "./terrain.mjs";
 const mix=(a,b,t)=>a+(b-a)*t;
 const vector=(a,b,t)=>a.map((v,i)=>mix(v,b[i],t));
-const combine=(a,b,t)=>({color:vector(a.color,b.color,t),cover:vector(a.cover,b.cover,t),vegetation:mix(a.vegetation,b.vegetation,t)});
+const combine=(a,b,t)=>t===0?a:t===1?b:({color:vector(a.color,b.color,t),cover:vector(a.cover,b.cover,t),vegetation:mix(a.vegetation,b.vegetation,t)});
 const avg=items=>items.reduce((acc,v,i)=>i?combine(acc,v,1/(i+1)):v,null);
 const key=a=>a.join(",");
 const clamp=v=>Math.min(1,Math.max(0,v));

@@ -1,11 +1,11 @@
 // WebGL2 depth-tested triangles; all positions originate in the terrain mesh.
 const VS=`#version 300 es
-in vec3 a_position; in vec3 a_color; in vec2 a_uv; in vec3 a_cover; in float a_rim;
-out vec3 v_color; out vec2 v_uv; out vec3 v_cover; out float v_rim;
-void main(){gl_Position=vec4(a_position,1.0);v_color=a_color;v_uv=a_uv;v_cover=a_cover;v_rim=a_rim;}`;
+in vec3 a_position; in vec3 a_color; in vec2 a_uv; in vec3 a_cover; in float a_rim; in vec2 a_mask_uv;
+out vec3 v_color; out vec2 v_uv; out vec3 v_cover; out float v_rim; out vec2 v_mask_uv;
+void main(){gl_Position=vec4(a_position,1.0);v_color=a_color;v_uv=a_uv;v_cover=a_cover;v_rim=a_rim;v_mask_uv=a_mask_uv;}`;
 const FS=`#version 300 es
 precision highp float;
-in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; uniform sampler2D u_texture; uniform sampler2D u_mask; uniform int u_mode; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
+in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; uniform sampler2D u_texture; uniform sampler2D u_mask; uniform int u_mode; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
 float coverage(float amount,float noise){
@@ -18,12 +18,12 @@ void main(){
   if(u_mode==2){if(t.a<0.5)discard;color=vec4(t.rgb,1.0);}
   else {
     vec3 base=v_color*(u_mode==1?0.75+0.25*t.r:1.0);
-    float noise=noise2(v_uv*u_mask_scale);
-    if(u_mask_enabled)noise=mix(noise,texture(u_mask,v_uv).r,.65);
+    float noise=noise2(v_mask_uv*u_mask_scale);
+    if(u_mask_enabled)noise=mix(noise,texture(u_mask,v_mask_uv).r,.65);
     float rim=v_rim<0.0?1.0:(u_bleed<=0.0?0.0:1.0-smoothstep(0.0,u_bleed,v_rim));
     vec3 cover=clamp(v_cover*rim,0.0,1.0);
     if(u_debug){color=vec4(cover,1.0);return;}
-    float leaf=coverage(cover.x,noise),snow=coverage(cover.y,noise2(v_uv*u_mask_scale+vec2(19.3,7.7))*.35+noise*.65);
+    float leaf=coverage(cover.x,noise),snow=coverage(cover.y,noise2(v_mask_uv*u_mask_scale+vec2(19.3,7.7))*.35+noise*.65);
     if(v_rim>=0.0)base=mix(base,u_scorch_color,cover.z*.85);
     base=mix(base,u_leaf_color,leaf*.85);
     base=mix(base,u_snow_color,snow);
@@ -39,8 +39,8 @@ export function createRenderer(canvas){
   if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));
   gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(program);
   const vao=gl.createVertexArray(),buffer=gl.createBuffer();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
-  for(const [name,size,offset] of [["a_position",3,0],["a_color",3,12],["a_uv",2,24],["a_cover",3,32],["a_rim",1,44]]){
-    const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,48,offset);
+  for(const [name,size,offset] of [["a_position",3,0],["a_color",3,12],["a_uv",2,24],["a_cover",3,32],["a_rim",1,44],["a_mask_uv",2,48]]){
+    const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,56,offset);
   }
   const mode=gl.getUniformLocation(program,"u_mode");
   const uniforms=Object.fromEntries(["u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
@@ -70,7 +70,7 @@ export function createRenderer(canvas){
     if(record.revision!==actor.revision){gl.bindTexture(gl.TEXTURE_2D,record.tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,actor.image);record.revision=actor.revision;}
     return record.tex;
   }
-  function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/12);}
+  function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/14);}
   function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1i(uniforms.u_mask_enabled,maskEnabled?1:0);gl.uniform1i(uniforms.u_debug,debug?1:0);
@@ -81,11 +81,11 @@ export function createRenderer(canvas){
     let low=Infinity,high=-Infinity;
     for(const p of [...projected.flatMap(f=>f.p),...actors.flatMap(a=>a.quad)]){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
     const range=Math.max(1,high-low),center=(low+high)/2;
-    const pack=(out,p,color,uv,cover=[0,0,0],rim=-1)=>out.push(2*p.x/canvas.width-1,1-2*p.y/canvas.height,-(p.depth-center)*1.8/range,...color,...uv,...cover,rim);
+    const pack=(out,p,color,uv,cover=[0,0,0],rim=-1,maskUV=uv)=>out.push(2*p.x/canvas.width-1,1-2*p.y/canvas.height,-(p.depth-center)*1.8/range,...color,...uv,...cover,rim,...maskUV);
     const data=[];
     for(const {f,p} of projected){
       const active=selected&&f.address?.every((v,i)=>v===selected[i]),color=f.color??(f.kind==="top"?(active?[.68,.77,.43]:[.45,.61,.35]):f.kind==="bottom"?[.34,.27,.22]:[.57,.42,.30]);
-      for(let i=0;i<3;i++){const [x,y,z]=f.points[i],a=f.attributes?.[i];pack(data,p[i],a?.color??color,f.kind==="side"?[(x+y)/5,z/5]:[x/5,y/5],a?.cover??f.cover,a?.rim??-1);}
+      for(let i=0;i<3;i++){const [x,y,z]=f.points[i],a=f.attributes?.[i];pack(data,p[i],a?.color??color,f.kind==="side"?[(x+y)/5,z/5]:[x/5,y/5],a?.cover??f.cover,a?.rim??-1,[(x+Math.max(0,a?.rim??0)*.35)/5,(y+Math.max(0,a?.rim??0)*.5)/5]);}
     }
     draw(data,ground,pattern?1:0);
     const batches=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
