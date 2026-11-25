@@ -1,6 +1,7 @@
 // Game-neutral, bounded centerline walking on the existing solid-volume geometry.
 import {physicalPosition} from "./core.mjs";
 import {validAddress,anchorHeight} from "./entities.mjs";
+import {routeInteractions,useInteraction} from "./interactions.mjs";
 import {EDGE_NEIGHBORS,oppositeEdge,vertices,sampleSurface} from "./geometry.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const EPS=1e-8;
@@ -110,10 +111,21 @@ export function planObjectMove(world,id,to,profile){
   assert(anchorHeight(e,world.get(...e.address),world.config.grid)!==undefined,"Object has no support");
   return findRoute(world,e.address,to,profile);
 }
-export function moveObject(world,id,to,profile){
+export function moveObject(world,id,to,profile,{interactions=null,presentation=false}={}){
   const route=planObjectMove(world,id,to,profile);
-  if(route.ok)world.relocateEntity(id,to);
-  return route;
+  if(!route.ok)return route;
+  const events=interactions?routeInteractions(world,id,route.path,interactions):[];
+  const points=presentation?routeWaypoints(world,route.path,profile):undefined;
+  world.relocateEntity(id,to);
+  return {...route,...(interactions?{events}:{}),...(presentation?{points}:{})};
+}
+export function interactObject(world,id,address,profile,interactions,targetId=null){
+  const actor=world.getEntity(id);assert(actor,"Unknown interaction actor");
+  assert(validAddress(address),"Invalid interaction address");
+  assert(actor.anchor==="surface"&&actor.offset_ft.every(v=>v===0),"Interaction requires centered surface actor");
+  const route=planObjectMove(world,id,address,profile);
+  if(!route.ok||route.path.length>2)return {ok:false,reason:"Target outside reachable interaction range",events:[]};
+  return {ok:true,events:[useInteraction(world,id,address,interactions,targetId)]};
 }
 
 // Presentation follows the same center/edge points as validated walking.

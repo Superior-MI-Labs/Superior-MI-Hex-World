@@ -1,6 +1,7 @@
 import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
 import {validateEntity,validAddress} from "./entities.mjs";
+import {interactionTags} from "./interactions.mjs";
 export {shape} from "./geometry.mjs";
 // Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
 const int = Number.isSafeInteger;
@@ -41,6 +42,7 @@ function cell(value, subdivisions) {
   requireThat(value.material!=="air"||geometry.upper.every((h,i)=>h===geometry.lower[i]),"Air cannot contain solid geometry");
   const result={...copy(value),shape:geometry};
   if(result.components?.surface!==undefined)result.components.surface=surface(result.components.surface);
+  if(result.components?.interaction_tags!==undefined)result.components.interaction_tags=interactionTags(result.components.interaction_tags);
   return result;
 }
 export class World {
@@ -58,6 +60,7 @@ export class World {
   getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
   putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);}
   removeEntity(id){return this.#entities.delete(id);}
+  setEntityTags(id,tags){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,interaction_tags:tags}));}
   relocateEntity(id,address){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const next=validateEntity({...old,address});requireThat(this.get(...next.address),"Unknown entity cell");this.#entities.set(id,next);}
   #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
   defineChunk(cq,cr,cz,defaultCell={material:"air",shape:uniformShape(0)}){

@@ -205,7 +205,14 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='1,0,0'")
     page.locator("#previewRoute").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).route_steps===1")
+    page.locator("summary",has_text="Spatial interactions").click()
+    page.locator("#cellTags").fill("sensor, usable")
+    page.locator("#setCellTags").click()
+    page.locator("#useCell").click()
+    assert "environment.use" in page.locator("#interactionStatus").text_content()
     page.locator("#moveObject").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).interaction_events.some(e=>e.signals.some(s=>s.signal==='environment.sensor.enter'))")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).bent_sprites>0")
     with page.expect_download() as moved:
         page.locator("#save").click()
     assert json.loads(Path(moved.value.path()).read_text())["entities"][0]["address"]==[1,0,0]

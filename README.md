@@ -28,3 +28,6 @@ v0.13: settlement test scene, non-destructive interior cutaway, geometry-based l
 
 
 v0.14: externally hosted multi-pack art profiles and optional RGB detail modulation; [parallel art production handoff](docs/ART_PRODUCTION.md).
+
+
+v0.15: committed spatial enter/leave/use signals, persistent interaction tags, and visual foliage contact bending. See [interaction handoff](docs/INTERACTIONS.md).

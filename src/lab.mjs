@@ -9,16 +9,18 @@ import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
 import {fetchStyle,vegetationSamples} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding} from "./entities.mjs";
-import {validateMovement,planObjectMove,routeWaypoints,sampleRoute} from "./navigation.mjs";
+import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute} from "./navigation.mjs";
 import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
 import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettlement} from "./settlement.mjs";
 import {contactShadows} from "./lighting.mjs";
+import {validateInteractions,interactionTags,cellTarget,entityTarget,contactResponse,bendBillboard} from "./interactions.mjs";
 import {validatePrefab,planPrefab,placePrefab,capturePrefab} from "./prefabs.mjs";
 import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
 const base=await fetch("./examples/world.json").then(r=>{if(!r.ok)throw Error("World unavailable");return r.json()});
 const movement=validateMovement(await fetch("./examples/movement.json").then(r=>{if(!r.ok)throw Error("Movement profile unavailable");return r.json();}));
+const interactions=validateInteractions(await fetch("./examples/interactions.json").then(r=>{if(!r.ok)throw Error("Interactions unavailable");return r.json();}));
 const catalog=validateMaterials(await fetch("./examples/materials.json").then(r=>{if(!r.ok)throw Error("Materials unavailable");return r.json();}));
 let world,grid,clock=new Clock(base.simulation),yaw=0,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24,panX=0,panY=50,meshCache;
 const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
@@ -54,6 +56,13 @@ function prefabPlan(){
 }
 let preview=null,routePreview=null,visibilityPreview=null;
 const playback=new Map();
+let interactionEvents=[],contactByCell=new Map();
+const parseTags=s=>interactionTags(s.split(",").map(v=>v.trim()).filter(Boolean));
+function showEvents(events){interactionEvents=events;const signals=events.flatMap(e=>e.signals.map(s=>s.signal));$("interactionStatus").textContent=events.length+" spatial events; "+(signals.join(", ")||"no matching signals");}
+$("setCellTags").onclick=()=>{try{const c=world.get(...selected);world.set(...selected,{...c,components:{...c.components,interaction_tags:parseTags($("cellTags").value)}});dirty=true;sync();}catch(e){$("interactionStatus").textContent=e.message;}};
+$("setObjectTags").onclick=()=>{try{world.setEntityTags($("objects").value,parseTags($("objectTags").value));syncConstruction();}catch(e){$("interactionStatus").textContent=e.message;}};
+function useSelected(targetId=null){try{const result=interactObject(world,$("movingObject").value,selected,movement,interactions,targetId);if(result.ok)showEvents(result.events);else $("interactionStatus").textContent=result.reason;}catch(e){$("interactionStatus").textContent=e.message;}}
+$("useCell").onclick=()=>useSelected();$("useObject").onclick=()=>{if($("objects").value)useSelected($("objects").value);};
 const cutLevel=()=> $("cutaway").value==="all"?null:Number($("cutaway").value);
 let cutCenter=null;
 const cutOptions=()=>({center:cutCenter,radius:Number($("cutRadius").value)});
@@ -76,9 +85,9 @@ function syncMovement(){
 }
 $("movingObject").onchange=()=>{routePreview=null;$("routeStatus").textContent="";};
 function routeAction(commit){try{
-  const id=$("movingObject").value,result=planObjectMove(world,id,[...selected],movement);
+  const id=$("movingObject").value,result=commit?moveObject(world,id,[...selected],movement,{interactions,presentation:true}):planObjectMove(world,id,[...selected],movement);
   if(commit&&result.ok){
-    const points=routeWaypoints(world,result.path,movement);world.relocateEntity(id,selected);
+    const points=result.points;showEvents(result.events);
     if($("animateWalk").checked&&points.length>1)playback.set(id,{points,started:clock.visual});else playback.delete(id);
     syncConstruction();
   }
@@ -99,11 +108,13 @@ function syncConstruction(){
   }catch(e){preview=null;$("prefabStatus").textContent=e.message;$("placePrefab").disabled=true;}
   const menu=$("objects"),old=menu.value,items=world.entities().filter(e=>e.address.every((v,i)=>v===selected[i]));
   menu.replaceChildren(...items.map(e=>new Option(e.visual.asset+" · "+e.id,e.id)));if(items.some(e=>e.id===old))menu.value=old;
-  $("removeObject").disabled=!items.length;
+  $("removeObject").disabled=$("setObjectTags").disabled=$("useObject").disabled=!items.length;
+  $("objectTags").value=world.getEntity(menu.value)?.interaction_tags?.join(", ")??"";
   syncMovement();
 }
 for(const key of ["prefab","prefabRotation","prefabOffset"])$(key).onchange=syncConstruction;
 $("placePrefab").onclick=()=>{try{const {p,anchor,turns}=prefabPlan();if($("placePrefab").disabled)return;placePrefab(world,p,anchor,turns);dirty=true;sync();$("message").textContent=p.name+" placed";}catch(e){$("message").textContent=e.message;}};
+$("objects").onchange=()=>{$("objectTags").value=world.getEntity($("objects").value)?.interaction_tags?.join(", ")??"";};
 $("removeObject").onclick=()=>{playback.delete($("objects").value);world.removeEntity($("objects").value);syncConstruction();};
 
 // Temporary transparent vertical artwork, not an Atlas release.
@@ -137,7 +148,7 @@ const get=()=>world.get(...selected).shape;
 function reset(){
   const n=base.grid.geometry_subdivisions;grid={...base.grid};
   world=worldMode==="settlement"?buildSettlement(base,prefabCatalog,demoVisual):new World(worldMode==="exploration"?explorationConfig(base):base);
-  meshCache=new TerrainFaceCache(world);playback.clear();selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";
+  meshCache=new TerrainFaceCache(world);playback.clear();showEvents([]);selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";
   if(worldMode==="exploration"){yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;refreshRegion(true);}
   else if(worldMode==="settlement"){ground=settlementGround;domain=settlementDomain;activeChunks=0;yaw=0;scale=16;panX=0;panY=65;$("zoom").value=16;}
   else{ground=island;domain=islandDomain;activeChunks=0;for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));}
@@ -158,6 +169,7 @@ function sync(){
   $("heightLimits").textContent=blocked?"Unknown neighbor: load before editing":(limits.min*grid.vertical_ft/n)+"–"+(limits.max*grid.vertical_ft/n)+" ft allowed";
   const c=world.get(...selected),srf=surface(c.components?.surface);$("material").value=Object.hasOwn(catalog.materials,c.material)?c.material:"soil";
   for(const k of ["growth","health","moisture","leaves","snow","scorch"]){$(k).value=srf[k];$(k+"Value").value=Math.round(srf[k]*100)+"%";}
+  $("cellTags").value=c.components?.interaction_tags?.join(", ")??"";
   syncConstruction();
 }
 function move(value,ref=activeRef()){
@@ -213,7 +225,7 @@ $("load").onchange=async()=>{try{
   const next=World.restore(JSON.parse(await file.text())),g=next.config.grid,cfg=next.config,generated=cfg.generation?.profile===EXPLORATION_PROFILE,settlement=cfg.scene===SETTLEMENT;
   if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||g.chunk_size.some((n,i)=>n!==base.grid.chunk_size[i])||(!generated&&(cfg.generation||!((settlement?settlementDomain:islandDomain).every(a=>next.get(...a))))))throw Error("Unsupported laboratory world profile");
   if(generated){if(typeof cfg.generation.seed!=="string"||!cfg.generation.seed)throw Error("Invalid generation seed");loadViewport(next,viewportBounds({yaw:0,scale:24,width:canvas.width,height:canvas.height,panX:0,panY:50},g,undefined,120));}
-  world=next;meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
+  world=next;meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
   yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;$("worldMode").value=worldMode;
   if(generated)refreshRegion(true);else{ground=settlement?settlementGround:island;domain=settlement?settlementDomain:islandDomain;activeChunks=0;}
   sync();$("message").textContent="World imported";
@@ -239,33 +251,41 @@ canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=M
 $("resetView").onclick=()=>{yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
 canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
 function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);refreshRegion();ctx.clearRect(0,0,900,450);
-  if(dirty){const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;playback.clear();}
-  const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked;
+  if(dirty){const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;playback.clear();contactByCell=new Map();}
+  const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked,poses=new Map(),contacts=[];
+  for(const [id,motion] of playback){const pose=sampleRoute(motion.points,(clock.visual-motion.started)*10);if(pose.done){playback.delete(id);continue;}poses.set(id,pose);contacts.push({id,point:pose.point});}
+  let bent=0;
+  function flex(points,root,height,response,exclude=null){
+    if(!$("brushContact").checked||!contacts.length)return points;
+    const next=bendBillboard(points,root,height,contacts,response,exclude);if(next!==points)bent++;return next;
+  }
+  function cellContact(address){const k=address.join(",");if(!contactByCell.has(k))contactByCell.set(k,contactResponse(interactions,cellTarget(address,world.get(...address))));return contactByCell.get(k);}
+
   const visible=faces.filter(f=>visibleTriangle(f,view,canvas.width,canvas.height,scale*5));
   if($("vegetation").checked)for(const f of visible){
     if(f.kind!=="top"||f.vegetation<=0)continue;
     if(styled){
       for(const sample of vegetationSamples(f,seed,art.profile,scale)){
         const r=art.vegetation.get(sample.variant);if(!r)continue;
-        sprites.push({image:r.image,revision:r.revision,points:billboard(sample.point,yaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot)});
+        sprites.push({image:r.image,revision:r.revision,points:flex(billboard(sample.point,yaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot),sample.point,sample.height,contacts.length?cellContact(f.address):null)});
       }
     }else if(stableUnit(seed,f.address,"tuft"+f.triangle)<=f.vegetation){
       const p=[0,1,2].map(i=>f.points.reduce((sum,v)=>sum+v[i]/3,0)),h=.55+f.vegetation*1.1;
-      sprites.push({image:tufts.get(f.variant),revision:0,points:billboard(p,yaw,h*.9,h)});
+      sprites.push({image:tufts.get(f.variant),revision:0,points:flex(billboard(p,yaw,h*.9,h),p,h,contacts.length?cellContact(f.address):null)});
     }
   }
   let objectInstances=0,unresolvedObjects=0;const shadowObjects=[];
   if($("showActor").checked)for(const e of world.entities()){
     const h=anchorHeight(e,world.get(...e.address),grid);if(h===undefined){unresolvedObjects++;continue;}
     const o=physicalPosition(...e.address,grid);let p=[o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h],address=e.address,walking=false;
-    const motion=playback.get(e.id);if(motion){const pose=sampleRoute(motion.points,(clock.visual-motion.started)*10);p=pose.point;address=pose.address;walking=!pose.done;if(pose.done)playback.delete(e.id);}
+    const pose=poses.get(e.id);if(pose){p=pose.point;address=pose.address;walking=true;}
     if(!displayedAddress(address))continue;const screen=view(p);
     const margin=scale*e.visual.height_ft*4;if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
     const binding=walking&&e.visual.walk_state?{...e.visual,state:e.visual.walk_state}:e.visual;
     const entry=requestSprite(binding),s=entry.sprite??requestSprite(e.visual).sprite;
     if(!s){unresolvedObjects++;continue;}
     s.update(clock.visual*1000).catch(err=>{entry.error=err.message;entry.sprite=null;});
-    sprites.push({image:s.image,revision:s.revision,points:billboard(p,yaw,s.width,s.height,s.pivot)});objectInstances++;
+    sprites.push({image:s.image,revision:s.revision,points:flex(billboard(p,yaw,s.width,s.height,s.pivot),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id)});objectInstances++;
     if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
   }
   gpu.render(visible,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,softSprites:$("softSprites").checked,shadows:$("contactShadows").checked?contactShadows(visible,shadowObjects):[]});
@@ -300,6 +320,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,interaction_events:interactionEvents,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

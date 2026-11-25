@@ -1,0 +1,116 @@
+{
+  "schema": "smi-hex-interactions/1",
+  "rules": [
+    {
+      "id": "brush-contact",
+      "event": "enter",
+      "match": {
+        "kind": "cell",
+        "material": "soil",
+        "surface": {
+          "growth": [
+            0.2,
+            1
+          ],
+          "snow": [
+            0,
+            0.8
+          ],
+          "scorch": [
+            0,
+            0.8
+          ]
+        }
+      },
+      "signal": "environment.brush.contact",
+      "bend": {
+        "radius_ft": 3,
+        "vertical_ft": 2,
+        "strength": 0.65
+      }
+    },
+    {
+      "id": "brush-exit",
+      "event": "leave",
+      "match": {
+        "kind": "cell",
+        "material": "soil",
+        "surface": {
+          "growth": [
+            0.2,
+            1
+          ],
+          "snow": [
+            0,
+            0.8
+          ],
+          "scorch": [
+            0,
+            0.8
+          ]
+        }
+      },
+      "signal": "environment.brush.exit"
+    },
+    {
+      "id": "flexible-prop",
+      "event": "enter",
+      "match": {
+        "kind": "entity",
+        "tags": [
+          "flexible"
+        ]
+      },
+      "signal": "environment.prop.contact",
+      "bend": {
+        "radius_ft": 3,
+        "vertical_ft": 2,
+        "strength": 0.3
+      }
+    },
+    {
+      "id": "sensor-enter",
+      "event": "enter",
+      "match": {
+        "kind": "cell",
+        "tags": [
+          "sensor"
+        ]
+      },
+      "signal": "environment.sensor.enter"
+    },
+    {
+      "id": "sensor-leave",
+      "event": "leave",
+      "match": {
+        "kind": "cell",
+        "tags": [
+          "sensor"
+        ]
+      },
+      "signal": "environment.sensor.leave"
+    },
+    {
+      "id": "usable-cell",
+      "event": "use",
+      "match": {
+        "kind": "cell",
+        "tags": [
+          "usable"
+        ]
+      },
+      "signal": "environment.use"
+    },
+    {
+      "id": "usable-object",
+      "event": "use",
+      "match": {
+        "kind": "entity",
+        "tags": [
+          "usable"
+        ]
+      },
+      "signal": "object.use"
+    }
+  ]
+}

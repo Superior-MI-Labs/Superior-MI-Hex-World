@@ -1,5 +1,6 @@
 // A placed object is world data; rasters and animation frames are not.
 import {hasVolume,sampleSurface} from "./geometry.mjs";
+import {interactionTags} from "./interactions.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const id=s=>typeof s==="string"&&s.length>0&&s.length<=200;
 export const validAddress=a=>Array.isArray(a)&&a.length===3&&a.every(Number.isSafeInteger);
@@ -18,7 +19,7 @@ export function validateEntity(e){
   assert(e.anchor==="surface"||e.anchor==="cell","Invalid anchor");
   const offset=e.offset_ft??[0,0,0];
   assert(Array.isArray(offset)&&offset.length===3&&offset.every(v=>Number.isFinite(v)&&Math.abs(v)<=100),"Invalid entity offset");
-  return {...structuredClone(e),address:[...e.address],offset_ft:[...offset],visual:spriteBinding(e.visual)};
+  return {...structuredClone(e),address:[...e.address],offset_ft:[...offset],visual:spriteBinding(e.visual),...(e.interaction_tags!==undefined?{interaction_tags:interactionTags(e.interaction_tags)}:{})};
 }
 // Surface anchored objects follow terrain edits; if their support is removed,
 // they remain saved but unresolved. Gravity/collision belong to later systems.
