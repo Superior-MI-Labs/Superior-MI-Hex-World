@@ -16,9 +16,11 @@ Atlas smi-visual-pack/1 owns texture regions, pivots, animation sequences and at
 | Snow/leaves/scorch | 6 reusable coverage masks | grayscale, periodic, no baked hex border |
 | Wind/fire/water | 3 short loops initially | Atlas sequences, stable pivots and timing, transparent where appropriate |
 
-Initial renderer supports one repeating grayscale detail for top and side per style, weighted grass variants, alpha-cutout sprites, surface coverage masks and simple directional terrain lighting. Full-color per-material texture blending, overlay artwork, directional sprite variants, actual shadows/AO, transparent blending and animation bindings for vegetation remain explicit gates. Do not author production art around unsupported behavior.
+Current renderer supports one repeating grayscale or RGB modulation detail for top and side per style, weighted grass variants, soft sprite alpha, surface coverage masks, simple directional terrain lighting and object contact shadows. Full-color per-material texture blending, overlay artwork, directional sprite variants, directional shadows/AO and animation bindings for vegetation remain explicit gates. Do not author production art around unsupported behavior.
 
 ## Qualification
 Publish a small pilot pack first: no bulk generation until it passes a visual scene review. At close zoom inspect dense grass, varied silhouettes, readable ground gaps, no alpha fringe, consistent scale and lighting. Inspect six camera directions, slopes, cliffs, caves, excavation, snow edges, charred regions and seams across chunk boundaries. At farther zoom check mipmap stability and graceful vegetation density reduction. Test unchanged world coordinates and save state with style swaps. Record licensed sources, pack version and content hashes. Check atlas crops, pivots and alpha before publishing via existing Atlas pipeline. Review against the reference by eye; automated GPU tests cannot certify art quality.
 
 The bundled meadow fixture is original procedurally generated development artwork only, CC0-1.0. It exercises the contract, not the final quality bar. Next art production should occur in Superior MI Atlas; Hex World should consume its manifests.
+
+The ten-reference parallel production specification and exact agent handoff are in [ART_PRODUCTION.md](ART_PRODUCTION.md). They extend this quality gate, not the Atlas packaging format.

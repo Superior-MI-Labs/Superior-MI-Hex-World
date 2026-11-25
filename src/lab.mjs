@@ -6,7 +6,7 @@ import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle} from "./editor.
 import {project,pickFace,billboard,visibleTriangle} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
-import {loadStyle,vegetationSamples} from "./art-style.mjs";
+import {fetchStyle,vegetationSamples} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding} from "./entities.mjs";
 import {validateMovement,planObjectMove,routeWaypoints,sampleRoute} from "./navigation.mjs";
@@ -174,11 +174,19 @@ function simulate(seconds){if(seconds<=0)return;const edits=[];for(const address
 reset();
 $("level").onchange=()=>{const z=Number($("level").value);if(!displayedAddress([0,0,z])){$("cutaway").value="all";dirty=true;}selected=[selected[0],selected[1],z];sync();};
 loadActor();
-async function loadArt(){
-  try{const response=await fetch("./examples/meadow-style.json");if(!response.ok)throw Error("Style unavailable");const next=await loadStyle(await response.json());gpu.setTerrainDetail("top",next.top.image);gpu.setTerrainDetail("side",next.side.image);art=next;$("artStatus").textContent="Atlas meadow fixture loaded";}
-  catch(e){$("artStatus").textContent="Procedural fallback: "+e.message;}
+let artRequest=0;
+const fixtureStyle="./examples/meadow-style.json";
+async function loadArt(reference){
+  const request=++artRequest;$("artStatus").textContent="Loading art profile";
+  try{const next=await fetchStyle(reference,catalog);
+    if(request!==artRequest)return;
+    gpu.setTerrainDetail("top",next.top.image);gpu.setTerrainDetail("side",next.side.image);art=next;
+    $("artStatus").textContent=next.profile.id==="fantasy-meadow-fixture"?"Atlas meadow fixture loaded":"Atlas art loaded: "+next.profile.id;
+  }catch(e){if(request===artRequest)$("artStatus").textContent=(art?"Previous style retained: ":"Procedural fallback: ")+e.message;}
 }
-loadArt();
+$("loadArt").onclick=()=>loadArt($("artURL").value.trim());
+$("resetArt").onclick=()=>{$("artURL").value=fixtureStyle;loadArt(fixtureStyle);};
+loadArt(fixtureStyle);
 if(catalog.transitions.mask)createAtlasMask(catalog.transitions.mask).then(image=>{gpu.setTransitionMask(image);$("maskStatus").textContent="Atlas transition mask loaded";}).catch(e=>{$("maskStatus").textContent="Procedural mask fallback: "+e.message;});
 $("transitions").onchange=()=>dirty=true;
 function demoSurface(kind){

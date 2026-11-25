@@ -68,6 +68,12 @@ with sync_playwright() as p:
     assert coverage["grass"][1]>240 and coverage["grass"][0]<10,coverage
     assert coverage["rim"][0][1]>200 and coverage["rim"][1][1]<10,coverage
     page.wait_for_function("document.querySelector('#artStatus').textContent === 'Atlas meadow fixture loaded'")
+    page.locator("#artURL").fill("./examples/no-such-style.json")
+    page.locator("#loadArt").click()
+    page.wait_for_function("document.querySelector('#artStatus').textContent.startsWith('Previous style retained:')")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style === 'fantasy-meadow-fixture'")
+    page.locator("#resetArt").click()
+    page.wait_for_function("document.querySelector('#artStatus').textContent === 'Atlas meadow fixture loaded'")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style === 'fantasy-meadow-fixture'")
     page.locator("#artStyle").uncheck()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style === null")
@@ -220,7 +226,7 @@ with sync_playwright() as p:
     page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='0,0,0'")
     page.locator("#localCut").click()
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cutaway_center.join(',')==='0,0'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cutaway_center?.join(',')==='0,0'")
     page.locator("#checkSight").click()
     assert page.locator("#sightStatus").text_content()=="clear"
     page.locator("#previewRoute").click()

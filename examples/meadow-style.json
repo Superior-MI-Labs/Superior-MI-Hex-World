@@ -1,7 +1,7 @@
 {
   "schema": "smi-hex-style/1",
   "id": "fantasy-meadow-fixture",
-  "manifest": "./examples/meadow-art/manifest.json",
+  "manifest": "./meadow-art/manifest.json",
   "detail": {
     "top": "smi.hex.detail.meadow",
     "side": "smi.hex.detail.earth",

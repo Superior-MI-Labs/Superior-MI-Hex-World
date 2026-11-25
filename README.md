@@ -25,3 +25,6 @@ v0.12: profile-driven centerline walking, bounded route search, ceiling clearanc
 
 
 v0.13: settlement test scene, non-destructive interior cutaway, geometry-based line-of-sight, route animation and optional Atlas walking state.
+
+
+v0.14: externally hosted multi-pack art profiles and optional RGB detail modulation; [parallel art production handoff](docs/ART_PRODUCTION.md).

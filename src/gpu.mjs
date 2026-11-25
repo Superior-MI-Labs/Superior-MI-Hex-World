@@ -5,7 +5,7 @@ out vec3 v_color; out vec2 v_uv; out vec3 v_cover; out float v_rim; out vec2 v_m
 void main(){gl_Position=vec4(a_position,1.0);v_color=a_color;v_uv=a_uv;v_cover=a_cover;v_rim=a_rim;v_mask_uv=a_mask_uv;}`;
 const FS=`#version 300 es
 precision highp float;
-in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; uniform sampler2D u_texture; uniform sampler2D u_mask; uniform int u_mode; uniform float u_detail_strength; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
+in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; uniform sampler2D u_texture; uniform sampler2D u_mask; uniform int u_mode; uniform float u_detail_strength; uniform bool u_rgb_detail; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
 float coverage(float amount,float noise){
@@ -20,7 +20,8 @@ void main(){
   else if(u_mode==4){if(t.a<=0.02||t.a>=0.98)discard;color=t;}
   else if(u_mode==5){if(any(lessThan(v_uv,vec2(0.0)))||any(greaterThan(v_uv,vec2(1.0))))discard;color=vec4(0.0,0.0,0.0,t.a*v_color.r);}
   else {
-    vec3 base=v_color*(u_mode==1?mix(1.0,t.r,u_detail_strength):1.0);
+    vec3 detail=u_rgb_detail?t.rgb:vec3(t.r);
+    vec3 base=v_color*(u_mode==1?mix(vec3(1.0),detail,u_detail_strength):vec3(1.0));
     float noise=noise2(v_mask_uv*u_mask_scale);
     if(u_mask_enabled)noise=mix(noise,texture(u_mask,v_mask_uv).r,.65);
     float rim=v_rim<0.0?1.0:(u_bleed<=0.0?0.0:1.0-smoothstep(0.0,u_bleed,v_rim));
@@ -46,7 +47,7 @@ export function createRenderer(canvas){
     const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,56,offset);
   }
   const mode=gl.getUniformLocation(program,"u_mode");
-  const uniforms=Object.fromEntries(["u_detail_strength","u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
+  const uniforms=Object.fromEntries(["u_detail_strength","u_rgb_detail","u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
   gl.uniform1i(gl.getUniformLocation(program,"u_texture"),0);gl.uniform1i(gl.getUniformLocation(program,"u_mask"),1);
   function texture(){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);return t;}
   const ground=texture(),pixels=new Uint8Array(64*64*4);
@@ -91,6 +92,7 @@ export function createRenderer(canvas){
   function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,softSprites=false,shadows=[]}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(uniforms.u_detail_strength,style?.detail.strength??.25);
+    gl.uniform1i(uniforms.u_rgb_detail,style?.detail.color_mode==="rgb_detail"?1:0);
     gl.uniform1i(uniforms.u_mask_enabled,maskEnabled?1:0);gl.uniform1i(uniforms.u_debug,debug?1:0);
     gl.uniform1f(uniforms.u_mask_scale,transitions.mask_scale??8);gl.uniform1f(uniforms.u_softness,transitions.mask_softness??.13);gl.uniform1f(uniforms.u_bleed,transitions.cliff_bleed_ft??1.25);
     gl.uniform3fv(uniforms.u_leaf_color,transitions.leaf_color??[.65,.34,.12]);gl.uniform3fv(uniforms.u_snow_color,transitions.snow_color??[.91,.94,.97]);gl.uniform3fv(uniforms.u_scorch_color,transitions.scorch_color??[.15,.13,.11]);
