@@ -21,11 +21,22 @@ jobs:
           node-version: '22'
       - run: node --test tests/*.test.mjs
       - run: node --check src/lab.mjs
+      - run: python3 -m pip install playwright && python3 -m playwright install --with-deps chromium
+      - name: GPU and Atlas browser qualification
+        run: |
+          python3 -m http.server 8000 >/tmp/hex-world-http.log 2>&1 &
+          python3 tests/browser_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hex-world-browser-qa
+          path: /tmp/hex-world-qa.png
+          if-no-files-found: ignore
       - uses: actions/configure-pages@v5
       - run: |
           mkdir -p _site
           cp index.html _site/
-          cp -r src examples _site/
+          cp -r src examples vendor _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

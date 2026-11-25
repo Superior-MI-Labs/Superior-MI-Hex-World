@@ -1,0 +1,11 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {project,pickFace,billboard} from "../src/camera.mjs";
+import {validateSpritePack} from "../src/assets.mjs";
+const pack=JSON.parse(readFileSync(new URL("../examples/atlas-character/manifest.json",import.meta.url),"utf8"));
+test("orthographic depth distinguishes points sharing screen coordinates",()=>{const a=project([0,0,0]),b=project([0,Math.sqrt(2),1]);assert.ok(Math.hypot(a.x-b.x,a.y-b.y)<1e-8);assert.ok(b.depth>a.depth);});
+test("picking chooses nearest actual triangle regardless of order",()=>{const far={points:[[0,0,1],[10,0,1],[0,10,1]]},near={points:[[0,0,2],[10,0,2],[0,10,2]]};const view=([x,y,depth])=>({x,y,depth});for(const f of [[far,near],[near,far]])assert.equal(pickFace(f,2,2,view),near);assert.equal(pickFace([far],30,30,view),null);});
+test("upright billboard holds horizontal screen width through six yaws",()=>{for(let yaw=0;yaw<6;yaw++){const p=billboard([0,0,0],yaw,4,5).map(v=>project(v,{yaw,scale:10}));assert.ok(Math.abs(p[1].x-p[0].x-40)<1e-8);assert.ok(Math.abs(p[2].y-p[3].y)<1e-8);assert.equal(p[2].depth<p[1].depth,true);}});
+test("pinned real Atlas character state set validates",()=>{const m=validateSpritePack(pack,"smi.example.robot.states");assert.equal(m.get("smi.example.robot.states").kind,"state_set");});
+test("bad Atlas paths, crops and cyclic state references rejected",()=>{const p=structuredClone(pack);p.textures.atlas.path="../escape.png";assert.throws(()=>validateSpritePack(p,"smi.example.robot.states"));p.textures.atlas.path="textures/atlas.png";p.assets[0].rect_px[2]=10000;assert.throws(()=>validateSpritePack(p,"smi.example.robot.states"));const q=structuredClone(pack),s=q.assets.find(a=>a.id==="smi.example.robot.states");s.states[s.default_state]=s.id;assert.throws(()=>validateSpritePack(q,s.id));});
