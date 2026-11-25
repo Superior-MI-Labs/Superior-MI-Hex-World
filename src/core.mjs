@@ -37,7 +37,7 @@ export function neighbors(q,r,z) {
   addressKey(q,r,z);
   return [...DIRECTIONS.map(([a,b])=>[q+a,r+b,z]),[q,r,z+1],[q,r,z-1]].filter(a=>a.every(int));
 }
-function cell(value, subdivisions) {
+export function validateCell(value, subdivisions) {
   requireThat(typeof value?.material==="string"&&value.material.length>0,"Invalid material");
   const geometry=shape(value.shape,subdivisions);
   requireThat(value.material!=="air"||geometry.upper.every((h,i)=>h===geometry.lower[i]),"Air cannot contain solid geometry");
@@ -97,7 +97,7 @@ export class World {
   #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
   defineChunk(cq,cr,cz,defaultCell={material:"air",shape:uniformShape(0)}){
     const key=addressKey(cq,cr,cz);requireThat(!this.#chunks.has(key),"Chunk already defined");
-    const value=cell(defaultCell,this.#config.grid.geometry_subdivisions);
+    const value=validateCell(defaultCell,this.#config.grid.geometry_subdivisions);
     this.#chunks.set(key,{defaultCell:value,cells:new Map(),geometryRevision:++this.#revision});
     if(value.components?.surface?.burn>0)this.#burningDefaults.add(key);
     if(value.components?.water?.fill>0)this.#wetDefaults.add(key);
@@ -106,7 +106,7 @@ export class World {
   geometryRevisionAt(q,r,z){const [key]=this.#location(q,r,z);return this.#chunks.get(key)?.geometryRevision??null;}
   set(q,r,z,value){this.apply([{address:[q,r,z],value}]);}
   apply(edits){
-    const pending=edits.map(({address,value})=>{requireThat(Array.isArray(address)&&address.length===3&&address.every(int),"Invalid edit address");const [key,local]=this.#location(...address),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");return {chunk,local,key:addressKey(...address),value:cell(value,this.#config.grid.geometry_subdivisions)};});
+    const pending=edits.map(({address,value})=>{requireThat(Array.isArray(address)&&address.length===3&&address.every(int),"Invalid edit address");const [key,local]=this.#location(...address),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");return {chunk,local,key:addressKey(...address),value:validateCell(value,this.#config.grid.geometry_subdivisions)};});
     const changed=new Set();
     for(const {chunk,local,key,value} of pending){
       const old=chunk.cells.get(local)??chunk.defaultCell;

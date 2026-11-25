@@ -81,7 +81,7 @@ export function createRenderer(canvas){
     const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,88,offset);
   }
   return {vao,buffer};}
-  const {vao,buffer}=geometryBuffer();let terrainCache=null,projectionCache=null,terrainUploads=0,terrainCacheHit=false;
+  const {vao,buffer}=geometryBuffer();let terrainCache=null,projectionCache=null,terrainUploads=0,terrainCacheHit=false,drawCalls=0;
   function releaseTerrain(){if(terrainCache)for(const b of terrainCache.batches.values())if(b.gpu){gl.deleteVertexArray(b.gpu.vao);gl.deleteBuffer(b.gpu.buffer);}terrainCache=null;}
   const waterTime=gl.getUniformLocation(program,"u_water_time");
   const mode=gl.getUniformLocation(program,"u_mode"),lightCount=gl.getUniformLocation(program,"u_light_count"),lightPos=gl.getUniformLocation(program,"u_light_pos[0]"),lightRGB=gl.getUniformLocation(program,"u_light_rgb[0]");
@@ -139,11 +139,11 @@ export function createRenderer(canvas){
     if(record.revision!==actor.revision){gl.bindTexture(gl.TEXTURE_2D,record.tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,actor.image);record.revision=actor.revision;}
     return record.tex;
   }
-  function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
+  function draw(data,tex,m){if(!data.length)return;drawCalls++;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
   function drawTerrain(batch,tex,m,cacheHit){
     if(!cacheHit){terrainUploads++;draw(batch.data,tex,m);return;}
     if(!batch.gpu){batch.gpu=geometryBuffer();gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(batch.data),gl.STATIC_DRAW);terrainUploads++;}
-    gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.data.length/22);
+    drawCalls++;gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.data.length/22);
     gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   }
   function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
@@ -157,7 +157,7 @@ export function createRenderer(canvas){
     gl.uniform1f(uniforms.u_mask_scale,transitions.mask_scale??8);gl.uniform1f(uniforms.u_softness,transitions.mask_softness??.13);gl.uniform1f(uniforms.u_bleed,transitions.cliff_bleed_ft??1.25);
     gl.uniform3fv(uniforms.u_leaf_color,transitions.leaf_color??[.65,.34,.12]);gl.uniform3fv(uniforms.u_snow_color,transitions.snow_color??[.91,.94,.97]);gl.uniform3fv(uniforms.u_scorch_color,transitions.scorch_color??[.15,.13,.11]);
     gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.depthMask(true);gl.disable(gl.BLEND);
-    terrainUploads=0;terrainCacheHit=false;
+    terrainUploads=0;terrainCacheHit=false;drawCalls=0;
     const reusable=projectionKey!==null&&projectionCache?.key===projectionKey&&projectionCache.faces===faces;
     if(!reusable){const projected=faces.map(f=>({f,p:f.points.map(view)}));let low=Infinity,high=-Infinity;for(const f of projected)for(const p of f.p){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}projectionCache={key:projectionKey,faces,projected,low,high};}
     const projected=projectionCache.projected,actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
@@ -197,14 +197,15 @@ export function createRenderer(canvas){
     }
     if(shadows.length&&!debug){const data=[];for(const f of shadows){const p=f.points.map(view);for(let i=0;i<3;i++)pack(data,p[i],[f.opacity,0,0],f.uv[i]);}gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,shadowTexture,5);gl.depthMask(true);gl.disable(gl.BLEND);}
     const tint=a=>spriteTint.map(v=>v+(1-v)*(a.emissive??0));
-    const batches=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
-    for(const {actor,quad} of actors){used.add(actor.image);const tex=spriteTexture(actor),batch=batches.get(tex)??[];for(const i of [0,1,2,0,2,3])pack(batch,quad[i],tint(actor),uv[i],undefined,undefined,undefined,undefined,1,actor.points[i]);batches.set(tex,batch);}
-    for(const [tex,batch] of batches)draw(batch,tex,softSprites?3:2);
-    if(softSprites){
+    const batches=new Map(),cutouts=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
+    for(const {actor,quad} of actors){used.add(actor.image);const tex=spriteTexture(actor),target=softSprites&&!actor.hardAlpha?batches:cutouts,batch=target.get(tex)??[];for(const i of [0,1,2,0,2,3])pack(batch,quad[i],tint(actor),uv[i],undefined,undefined,undefined,undefined,1,actor.points[i]);target.set(tex,batch);}
+    for(const [tex,batch] of cutouts)draw(batch,tex,2);
+    for(const [tex,batch] of batches)draw(batch,tex,3);
+    if(softSprites&&batches.size){
       // Opaque sprite cores write depth. Translucent fringes retain terrain
       // depth testing and blend back-to-front, without writing depth.
       gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
-      const ordered=[...actors].sort((a,b)=>a.quad.reduce((s,p)=>s+p.depth,0)-b.quad.reduce((s,p)=>s+p.depth,0));
+      const ordered=actors.filter(a=>!a.actor.hardAlpha).map(a=>({...a,depth:a.quad.reduce((s,p)=>s+p.depth,0)})).sort((a,b)=>a.depth-b.depth);
       let current=null,batch=[];
       for(const {actor,quad} of ordered){
         const tex=spriteTexture(actor);if(current!==tex){if(current)draw(batch,current,4);batch=[];current=tex;}
@@ -222,5 +223,5 @@ export function createRenderer(canvas){
     for(const [image,record] of spriteTextures)if(!used.has(image)){gl.deleteTexture(record.tex);spriteTextures.delete(image);}
 
   }
-  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,diagnostics(){return {terrain_uploads:terrainUploads,terrain_cache_hit:terrainCacheHit};},readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
+  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,diagnostics(){return {terrain_uploads:terrainUploads,terrain_cache_hit:terrainCacheHit,draw_calls:drawCalls};},readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
 }

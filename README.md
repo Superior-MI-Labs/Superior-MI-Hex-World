@@ -79,3 +79,6 @@ v0.30: multi-cell editor, smooth keyboard camera, fixed animated waterways, expo
 
 
 v0.31: bounded reversible cell commands, selection brushes, shared vertex/prefab planning and settled meadow diagnostics.
+
+
+v0.32: staged painting strokes, grouped undo, reviewed JSON edit plans, qualified asset palette and foliage render presets.
