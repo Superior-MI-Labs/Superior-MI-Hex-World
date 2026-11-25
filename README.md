@@ -64,3 +64,6 @@ v0.25: indexed object collision queries and explicit host conditions bound to ca
 
 
 v0.26: persistent world lighting override, terrain ambient occlusion, approximate directional object shadows and consistent material/sprite shading.
+
+
+v0.27: persistent attached colored lights, derived fire illumination, world-space fragment lighting and whole-sprite self-lighting.

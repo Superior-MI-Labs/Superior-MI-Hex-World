@@ -22,3 +22,5 @@ Families can opt into same-level root spacing with `spacing_ft` (0–5 feet). Op
 
 ## Lighting
 The host now supports style ambient/directional lighting with optional `occlusion`, `sprite_strength`, `shadow_strength` factors (0–1), and a saved world lighting override. Keep sprite artwork free of baked ground shadows. Host directional shadows are approximate upright-object footprints; authored shading remains part of the artwork. No requirement to author normal maps or new Atlas fields for this milestone.
+
+Local lights are host-owned entity components. Use Atlas artwork for the torch/crystal appearance; do not bake the surrounding world illumination into sprite sheets. The initial host self-lighting factor applies to the whole sprite, not an authored emissive texture. The host derives fire light from its existing effect and surface state.

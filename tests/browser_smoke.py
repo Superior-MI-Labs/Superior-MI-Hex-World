@@ -158,6 +158,27 @@ with sync_playwright() as p:
     assert 105<gradient[1][0]<150 and 105<gradient[1][2]<150,materials
     assert gradient[2][2]>225 and gradient[2][0]<30,materials
     assert all(120<v<136 for v in materials["mixed"][:3]),materials
+    # Per-fragment local light illuminates terrain and sprites in world space.
+    local_light=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs');
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const face={kind:'top',points:[[0,0,1],[64,0,1],[0,64,1]],color:[.5,.5,.5]};
+      const light={point:[12,12,1],radius:12,color:[1,0,0],intensity:1};
+      const lighting={ambient:.2,direction:[1,0,0],sprite_strength:1};
+      r.render([face],view,{pattern:false,lighting,pointLights:[light]});
+      const center=r.readPixel(12,12),far=r.readPixel(30,12);
+      r.render([face],view,{pattern:false,lighting});const off=r.readPixel(12,12);
+      const img=document.createElement('canvas');img.width=img.height=1;const ctx=img.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,1,1);
+      const actor={image:img,revision:0,points:[[5,5,2],[20,5,2],[20,20,2],[5,20,2]]};
+      r.render([face],view,{pattern:false,lighting,sprites:[actor],pointLights:[light]});const sprite=r.readPixel(12,12);
+      r.render([face],view,{pattern:false,lighting,sprites:[{...actor,emissive:1}]});const emissive=r.readPixel(12,12);
+      return {center,far,off,sprite,emissive};
+    }""")
+    assert local_light["center"][0]>120 and local_light["center"][1]<35,local_light
+    assert local_light["far"]==local_light["off"],local_light
+    assert local_light["sprite"][0]>240 and local_light["sprite"][1]<180,local_light
+    assert all(v>245 for v in local_light["emissive"][:3]),local_light
     # Lighting also shades full snow coverage and preserves unlit debug colors.
     lit=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -460,10 +481,18 @@ with sync_playwright() as p:
     page.locator("#applyCollider").click()
     assert page.locator("#colliderStatus").text_content()=="Collider applied"
     page.locator("#showColliders").check()
+    page.locator("summary",has_text="Object light source").click()
+    page.locator("#applyObjectLight").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).point_lights>0")
+    page.locator("#pointLights").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).point_lights===0")
+    page.locator("#pointLights").check()
     with page.expect_download() as physical_save:
         page.locator("#save").click()
     physical=json.loads(Path(physical_save.value.path()).read_text())
     assert next(e for e in physical["entities"] if e["id"]!="demo-actor")["collider"]=={"kind":"cylinder","radius_ft":1.25,"height_ft":3}
+    assert next(e for e in physical["entities"] if e["id"]!="demo-actor")["light"]["radius_ft"]==12
+    page.locator("#removeObjectLight").click()
     page.locator("#showColliders").uncheck()
     page.locator("#removeObject").click()
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===1&&s.scatter_candidates===n-1}",arg=count)

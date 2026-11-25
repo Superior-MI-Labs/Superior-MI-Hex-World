@@ -89,6 +89,7 @@ export class World {
     const next=validateEntity({...e,visual:{...visual,...visualSelection(selection)}});this.#entities.set(id,next);
     if(colliderActive(e)!==colliderActive(next))this.#collisionRevision++;
   }
+  setEntityLight(id,light){const e=this.#entities.get(id);requireThat(e,"Unknown entity");const {light:previous,...rest}=e;this.#entities.set(id,validateEntity(light===null?rest:{...rest,light}));}
   setEntityOrientation(id,orientation_steps){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,orientation_steps}));}
   setEntityTags(id,tags){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,interaction_tags:tags}));}
   relocateEntity(id,address){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const next=validateEntity({...old,address});requireThat(this.get(...next.address),"Unknown entity cell");this.#entities.set(id,next);if(old.collider&&old.address.some((v,i)=>v!==address[i]))this.#collisionRevision++;}

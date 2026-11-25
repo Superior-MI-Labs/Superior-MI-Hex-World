@@ -1,5 +1,7 @@
-import {physicalPosition} from "./core.mjs";
-import {sampleSurface} from "./geometry.mjs";
+import {physicalPosition,effectActive} from "./core.mjs";
+import {sampleSurface,hasVolume} from "./geometry.mjs";
+import {anchorHeight} from "./entities.mjs";
+import {validateLightSource} from "./environment.mjs";
 // Contact shadow geometry is projected onto the same top triangles as terrain.
 export function contactShadows(faces,objects){
   const surfaces=new Map();
@@ -65,4 +67,51 @@ export function directionalShadows(faces,objects,light,grid,{limit=20000}={}){
 }
 export function spriteShade(light){
   return light?1-(1-light.ambient)*(light.sprite_strength??0)*.5:1;
+}
+
+// One light contribution contract, used by objects and existing fire effects.
+export const MAX_POINT_LIGHTS=24;
+const FIRE_LIGHT=Object.freeze(validateLightSource({color:[1,.48,.16],radius_ft:12,intensity:1.15,offset_z_ft:1.5,flicker:.25}));
+function flicker(id,t,amount){
+  let hash=2166136261;for(let i=0;i<id.length;i++)hash=Math.imul(hash^id.charCodeAt(i),16777619);
+  const phase=(hash>>>0)/4294967296*Math.PI*2;
+  return 1-amount*(.5+.3*Math.sin(t*9+phase)+.2*Math.sin(t*17-phase));
+}
+export function collectPointLights(world,{simulationTime=0,visualTime=0,poses=new Map(),displayed=()=>true}={}){
+  const g=world.config.grid,out=[];
+  function add(id,point,l){
+    if(!l.intensity||!l.color.some(v=>v>0))return;
+    out.push({id,point:[point[0],point[1],point[2]+l.offset_z_ft],radius:l.radius_ft,color:l.color,intensity:l.intensity*flicker(id,visualTime,l.flicker)});
+  }
+  for(const e of world.entities()){
+    if(!e.light)continue;const h=anchorHeight(e,world.get(...e.address),g);if(h===undefined)continue;
+    const o=physicalPosition(...e.address,g),pose=poses.get(e.id);
+    if(!displayed(pose?.address??e.address))continue;
+    add("entity:"+e.id,pose?.point??[o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h],e.light);
+  }
+  // Co-located fire effects and burning surface share a single source.
+  const fires=new Map();
+  for(const e of world.effects())if(e.kind==="fire"&&effectActive(e.instance,simulationTime))fires.set(e.address.join(","),e.address);
+  for(const a of world.burningAddresses())fires.set(a.join(","),a);
+  for(const [key,a] of fires){
+    if(!displayed(a))continue;const cell=world.get(...a);if(!cell)continue;
+    const o=physicalPosition(...a,g),z=sampleSurface(cell.shape,g,0,0);
+    if(z!==undefined&&hasVolume(cell.shape))add("fire:"+key,[o.x,o.y,o.z+z],FIRE_LIGHT);
+  }
+  return out;
+}
+// Select the strongest candidates intersecting rendered world bounds, with
+// deterministic ID ties. The limit is a rendering budget, not saved state.
+export function selectPointLights(lights,faces,sprites=[],limit=MAX_POINT_LIGHTS){
+  const lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];
+  for(const items of [faces,sprites])for(const f of items)for(const p of f.points)for(let i=0;i<3;i++){lo[i]=Math.min(lo[i],p[i]);hi[i]=Math.max(hi[i],p[i]);}
+  if(lo[0]===Infinity)return {lights:[],omitted:0};
+  const candidates=[];
+  for(const l of lights){
+    const distance=Math.hypot(...l.point.map((v,i)=>Math.max(lo[i]-v,0,v-hi[i])));
+    if(distance>=l.radius)continue;
+    candidates.push({l,score:l.intensity*(1-distance/l.radius)**2});
+  }
+  candidates.sort((a,b)=>b.score-a.score||(a.l.id<b.l.id?-1:a.l.id>b.l.id?1:0));
+  return {lights:candidates.slice(0,limit).map(v=>v.l),omitted:Math.max(0,candidates.length-limit)};
 }

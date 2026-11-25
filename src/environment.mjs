@@ -22,6 +22,11 @@ export function validateLighting(l){
   for(const k of ["occlusion","sprite_strength","shadow_strength"]){assert(finite(l[k]??DEFAULT_LIGHTING[k],0,1),"Invalid lighting "+k);result[k]=l[k]??DEFAULT_LIGHTING[k];}
   return result;
 }
+// Host-owned light source, independent of artwork and collision.
+export function validateLightSource(l){
+  assert(record(l)&&Array.isArray(l.color)&&l.color.length===3&&l.color.every(v=>finite(v,0,1))&&finite(l.radius_ft,.1,60)&&finite(l.intensity,0,2)&&finite(l.offset_z_ft??0,-20,100)&&finite(l.flicker??0,0,1)&&finite(l.emissive??0,0,1),"Invalid point light");
+  return {color:[...l.color],radius_ft:l.radius_ft,intensity:l.intensity,offset_z_ft:l.offset_z_ft??0,flicker:l.flicker??0,emissive:l.emissive??0};
+}
 export function validateEnvironment(e={wind:CALM,zones:[]}){
   assert(record(e)&&Array.isArray(e.zones??[])&&(e.zones??[]).length<=128,"Invalid environment");
   const ids=new Set(),zones=(e.zones??[]).map(z=>{
