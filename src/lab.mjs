@@ -35,14 +35,16 @@ let world,grid,clock=new Clock(base.simulation),yaw=0,last,drag=null,selected=[0
 const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
 const islandDomain=island.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
 let ground=island,domain=islandDomain,worldMode="island",regionKey="",cameraKey="",activeChunks=0;
+let regionBounds=null,wireCells=new Map();
 let renderYaw=0,turn=null,selection=[[0,0,0]],keys=new Set(),visibleCache=null,grassCache=new WeakMap(),shadowCache=null;
 function camera(){return {yaw:renderYaw,scale,width:canvas.width,height:canvas.height,panX,panY};}
 function refreshRegion(force=false){
   if(worldMode!=="exploration")return;
   const current=JSON.stringify(camera());if(!force&&current===cameraKey)return;cameraKey=current;
-  const bounds=viewportBounds(camera(),grid,undefined,Math.ceil(scale*5)),key=JSON.stringify(bounds);
-  if(!force&&key===regionKey)return;
-  const loaded=loadViewport(world,bounds);regionKey=key;domain=loaded.addresses;ground=domain.filter(a=>a[2]===0);activeChunks=loaded.chunks.length;dirty=true;
+  const requested=viewportBounds(camera(),grid,undefined,Math.ceil(scale*5)),size=b=>(b.q[1]-b.q[0]+1)*(b.r[1]-b.r[0]+1)*(b.z[1]-b.z[0]+1);
+  if(!force&&regionKey&&regionBounds&&["q","r","z"].every(k=>regionBounds[k][0]<=requested[k][0]&&regionBounds[k][1]>=requested[k][1])&&size(regionBounds)<=size(requested)*2)return;
+  const padded={q:[requested.q[0]-2,requested.q[1]+2],r:[requested.r[0]-2,requested.r[1]+2],z:requested.z},bounds=size(padded)<=30000?padded:requested;
+  const loaded=loadViewport(world,bounds);regionBounds=bounds;regionKey=JSON.stringify(bounds);domain=loaded.addresses;ground=domain.filter(a=>a[2]===0);activeChunks=loaded.chunks.length;dirty=true;
   if(!force)syncConstruction();
 }
 const prefabCatalog=(await fetch("./examples/prefabs.json").then(r=>{if(!r.ok)throw Error("Prefabs unavailable");return r.json();})).map(validatePrefab);
@@ -452,15 +454,15 @@ canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=n
 function rotateCamera(delta){yaw=wrapYaw(yaw+delta);turn=turnCamera(renderYaw,yaw,performance.now());}
 $("clearSelection").onclick=()=>{selection=[[...selected]];sync();};
 const shortcuts=new Set(["q","e","w","a","s","d","z","x"]);
-function editableTarget(t){return t?.isContentEditable||["INPUT","SELECT","TEXTAREA","BUTTON"].includes(t?.tagName);}
+function editableTarget(t){return t?.isContentEditable||["INPUT","SELECT","TEXTAREA"].includes(t?.tagName);}
 window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(editableTarget(e.target)||e.ctrlKey||e.metaKey||e.altKey||!shortcuts.has(k))return;e.preventDefault();if((k==="q"||k==="e")&&!e.repeat)rotateCamera(k==="q"?-1:1);else keys.add(k);});
 window.addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
 window.addEventListener("blur",()=>keys.clear());
 document.addEventListener("focusin",e=>{if(editableTarget(e.target))keys.clear();});
-let profileFrame={frame_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0;
+let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSum={},profileSamples=0;
 
-function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;const started=performance.now(),motion=cameraKeys(keys,dt,scale);panX+=motion.dx;panY+=motion.dy;if(motion.scale!==scale){scale=motion.scale;$("zoom").value=scale;}if(turn){const t=sampleTurn(turn,ms);renderYaw=t.done?yaw:t.yaw;if(t.done)turn=null;}clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);refreshRegion();ctx.clearRect(0,0,900,450);
-  const terrainStart=performance.now();if(dirty){visibleCache=null;grassCache=new WeakMap();shadowCache=null;scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});if($("ambientOcclusion").checked)faces=terrainOcclusion(world,faces);waterSurfaces=buildWaterSurfaces(renderWorld,level===null?domain:domain.filter(displayedAddress),{sides:true});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
+function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,interval/1000);last=ms;const started=performance.now(),motion=cameraKeys(keys,dt,scale);panX+=motion.dx;panY+=motion.dy;if(motion.scale!==scale){scale=motion.scale;$("zoom").value=scale;}if(turn){const t=sampleTurn(turn,ms);renderYaw=t.done?yaw:t.yaw;if(t.done)turn=null;}clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);const terrainStart=performance.now();refreshRegion();ctx.clearRect(0,0,900,450);
+  if(dirty){visibleCache=null;grassCache=new WeakMap();shadowCache=null;wireCells=new Map();scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});if($("ambientOcclusion").checked)faces=terrainOcclusion(world,faces);waterSurfaces=buildWaterSurfaces(renderWorld,level===null?domain:domain.filter(displayedAddress),{sides:true});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
   if(lastCollisionRevision!==world.collisionRevision){lastCollisionRevision=world.collisionRevision;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);}
   const terrainMS=performance.now()-terrainStart,spritesStart=performance.now();
   const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked,poses=new Map(),contacts=[];
@@ -534,10 +536,12 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
   const local=$("pointLights").checked?selectPointLights(collectPointLights(world,{simulationTime:clock.simulation,visualTime:clock.visual,poses,displayed:displayedAddress}),[...visible,...water],sprites):{lights:[],omitted:0};
   const walls=[];for(const [a,b] of selectionEdges(world,selection.filter(displayedAddress),grid)){const up=p=>[p[0],p[1],p[2]+grid.vertical_ft*.18],lo=p=>[p[0],p[1],p[2]+.015];walls.push({points:[lo(a),lo(b),up(b)],fade:[0,0,1]},{points:[lo(a),up(b),up(a)],fade:[0,1,1]});}
   const shadowMS=performance.now()-shadowStart,renderStart=performance.now();
-  gpu.render(visible,view,{selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
+  gpu.render(visible,view,{projectionKey:ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
   const renderMS=performance.now()-renderStart;
   if($("wire").checked){
-    for(const a of domain){if(a[2]!==selected[2])continue;const p=projectLocal(a,[0,0,0]);if(p.x<-scale*5||p.x>canvas.width+scale*5||p.y<-scale*5||p.y>canvas.height+scale*5||hasVolume(world.get(...a).shape))continue;polygon(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)),null,"#344b56");}
+    if(!wireCells.has(selected[2]))wireCells.set(selected[2],domain.filter(a=>a[2]===selected[2]&&!hasVolume(world.get(...a).shape)));
+    const emptyCorners=vertices(uniformShape(0),grid).upper.slice(0,6);
+    for(const a of wireCells.get(selected[2])){const p=projectLocal(a,[0,0,0]);if(p.x<-scale*5||p.x>canvas.width+scale*5||p.y<-scale*5||p.y>canvas.height+scale*5)continue;polygon(emptyCorners.map(p=>projectLocal(a,p)),null,"#344b56");}
 
   }
   function drawFire(a){if(!displayedAddress(a))return;const s=world.get(...a).shape,p=projectLocal(a,[0,0,sampleSurface(s,grid,0,0)]);for(let i=0;i<5;i++){ctx.fillStyle=i%2?"#ffcf69":"#ec783c";ctx.beginPath();ctx.ellipse(p.x+i*8-16,p.y-15,7,17+7*Math.sin(clock.visual*9+i),0,0,Math.PI*2);ctx.fill();}}
@@ -572,7 +576,9 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  if(ms-profileAt>=500){profileAt=ms;profileFrame={frame_ms:Math.round((performance.now()-started)*10)/10,terrain_ms:Math.round(terrainMS*10)/10,sprites_ms:Math.round(spriteMS*10)/10,shadow_ms:Math.round(shadowMS*10)/10,render_ms:Math.round(renderMS*10)/10};$("performanceStatus").textContent=JSON.stringify(profileFrame);}
+  const timing={frame_ms:performance.now()-started,frame_interval_ms:interval,terrain_ms:terrainMS,sprites_ms:spriteMS,shadow_ms:shadowMS,render_ms:renderMS};
+  profileSamples++;for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
+  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;Object.assign(profileFrame,gpu.diagnostics());profileSamples=0;profileSum={};$("performanceStatus").textContent=JSON.stringify(profileFrame);}
   $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw:renderYaw,target_yaw:yaw,rotating:!!turn,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

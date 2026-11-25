@@ -76,10 +76,13 @@ export function createRenderer(canvas){
   gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
   if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));
   gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(program);
-  const vao=gl.createVertexArray(),buffer=gl.createBuffer();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  function geometryBuffer(){const vao=gl.createVertexArray(),buffer=gl.createBuffer();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   for(const [name,size,offset] of [["a_position",3,0],["a_color",3,12],["a_uv",2,24],["a_cover",3,32],["a_rim",1,44],["a_mask_uv",2,48],["a_weights",4,56],["a_shade",1,72],["a_world",3,76]]){
     const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,88,offset);
   }
+  return {vao,buffer};}
+  const {vao,buffer}=geometryBuffer();let terrainCache=null,projectionCache=null,terrainUploads=0,terrainCacheHit=false;
+  function releaseTerrain(){if(terrainCache)for(const b of terrainCache.batches.values())if(b.gpu){gl.deleteVertexArray(b.gpu.vao);gl.deleteBuffer(b.gpu.buffer);}terrainCache=null;}
   const waterTime=gl.getUniformLocation(program,"u_water_time");
   const mode=gl.getUniformLocation(program,"u_mode"),lightCount=gl.getUniformLocation(program,"u_light_count"),lightPos=gl.getUniformLocation(program,"u_light_pos[0]"),lightRGB=gl.getUniformLocation(program,"u_light_rgb[0]");
   const uniforms=Object.fromEntries(["u_detail_strength","u_color_modes","u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
@@ -137,7 +140,13 @@ export function createRenderer(canvas){
     return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
-  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
+  function drawTerrain(batch,tex,m,cacheHit){
+    if(!cacheHit){terrainUploads++;draw(batch.data,tex,m);return;}
+    if(!batch.gpu){batch.gpu=geometryBuffer();gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(batch.data),gl.STATIC_DRAW);terrainUploads++;}
+    gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.data.length/22);
+    gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  }
+  function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(waterTime,visualTime);
     const lights=pointLights.slice(0,MAX_POINT_LIGHTS);
@@ -148,16 +157,25 @@ export function createRenderer(canvas){
     gl.uniform1f(uniforms.u_mask_scale,transitions.mask_scale??8);gl.uniform1f(uniforms.u_softness,transitions.mask_softness??.13);gl.uniform1f(uniforms.u_bleed,transitions.cliff_bleed_ft??1.25);
     gl.uniform3fv(uniforms.u_leaf_color,transitions.leaf_color??[.65,.34,.12]);gl.uniform3fv(uniforms.u_snow_color,transitions.snow_color??[.91,.94,.97]);gl.uniform3fv(uniforms.u_scorch_color,transitions.scorch_color??[.15,.13,.11]);
     gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.depthMask(true);gl.disable(gl.BLEND);
-    const projected=faces.map(f=>({f,p:f.points.map(view)})),actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
+    terrainUploads=0;terrainCacheHit=false;
+    const reusable=projectionKey!==null&&projectionCache?.key===projectionKey&&projectionCache.faces===faces;
+    if(!reusable){const projected=faces.map(f=>({f,p:f.points.map(view)}));let low=Infinity,high=-Infinity;for(const f of projected)for(const p of f.p){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}projectionCache={key:projectionKey,faces,projected,low,high};}
+    const projected=projectionCache.projected,actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
     const waterProjected=water.map(f=>({f,p:f.points.map(view)})),walls=selectionWalls.map(f=>({f,p:f.points.map(view)}));
-    let low=Infinity,high=-Infinity;
-    for(const p of [...projected.flatMap(f=>f.p),...actors.flatMap(a=>a.quad),...waterProjected.flatMap(f=>f.p),...walls.flatMap(f=>f.p)]){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
+    let {low,high}=projectionCache;
+    for(const items of [actors.map(a=>a.quad),waterProjected.map(f=>f.p),walls.map(f=>f.p)])for(const points of items)for(const p of points){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
+    if(!Number.isFinite(low)){low=0;high=1;}
+    // Stable padded bounds avoid repacking terrain for small sprite motion.
+    if(projectionKey!==null){low=Math.floor(low/5)*5;high=Math.ceil(high/5)*5;}
     const range=Math.max(1,high-low),center=(low+high)/2;
     const pack=(out,p,color,uv,cover=[0,0,0],rim=-1,maskUV=uv,weights=[1,0,0,0],shade=1,world=[0,0,0])=>out.push(2*p.x/canvas.width-1,1-2*p.y/canvas.height,-(p.depth-center)*1.8/range,...color,...uv,...cover,rim,...maskUV,...weights,shade,...world);
-    const batchesTerrain=new Map();
-    const repeat=style?.detail.repeat_ft??5;
+    const terrainKey=JSON.stringify([projectionKey,low,high,selected,lighting,canvas.width,canvas.height]);
+    const cacheHit=projectionKey!==null&&terrainCache?.faces===faces&&terrainCache.style===style&&terrainCache.key===terrainKey;
+    terrainCacheHit=cacheHit;
+    if(!cacheHit){releaseTerrain();terrainCache={key:terrainKey,faces,style,batches:new Map()};}
+    const batchesTerrain=terrainCache.batches,repeat=style?.detail.repeat_ft??5;
     const light=lighting,lightLength=light?Math.hypot(...light.direction):1,spriteTint=Array(3).fill(spriteShade(light));
-    for(const {f,p} of projected){
+    if(!cacheHit)for(const {f,p} of projected){
       const active=selected&&f.address?.every((v,i)=>v===selected[i]),color=f.color??(f.kind==="top"?(active?[.68,.77,.43]:[.45,.61,.35]):f.kind==="bottom"?[.34,.27,.22]:[.57,.42,.30]);
       const plan=terrainTexturePlan(f,style),key=JSON.stringify([plan.role,plan.keys]);
       if(!batchesTerrain.has(key))batchesTerrain.set(key,{...plan,data:[]});const data=batchesTerrain.get(key).data;
@@ -170,11 +188,12 @@ export function createRenderer(canvas){
       for(let i=0;i<3;i++){const [x,y,z]=f.points[i],a=f.attributes?.[i],uv=f.kind==="side"?[(x*Math.cos(angle)+y*Math.sin(angle))/repeat,z/repeat]:[x/repeat,y/repeat];pack(data,p[i],a?.color??color,uv,a?.cover??f.cover,a?.rim??-1,[(x+Math.max(0,a?.rim??0)*.35)/5,(y+Math.max(0,a?.rim??0)*.5)/5],plan.weights[i],shade*(1-(light?.occlusion??0)*(f.occlusion?.[i]??0)),f.points[i]);}
     }
     for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}gl.activeTexture(gl.TEXTURE0);
-    for(const {role,keys,modes,data} of batchesTerrain.values()){
+    for(const batch of batchesTerrain.values()){
+      const {role,keys,modes}=batch;
       const textures=keys.map(k=>style?(detailTextures.get(detailKey(role,k))??detailTextures.get(detailKey(role,null))??ground):ground);
       for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,textures[i]??ground);}
       gl.activeTexture(gl.TEXTURE0);gl.uniform4iv(uniforms.u_color_modes,Array.from({length:4},(_,i)=>modes[i]==="albedo"?2:modes[i]==="rgb_detail"?1:0));
-      draw(data,textures[0]??ground,pattern?1:0);
+      drawTerrain(batch,textures[0]??ground,pattern?1:0,cacheHit);
     }
     if(shadows.length&&!debug){const data=[];for(const f of shadows){const p=f.points.map(view);for(let i=0;i<3;i++)pack(data,p[i],[f.opacity,0,0],f.uv[i]);}gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,shadowTexture,5);gl.depthMask(true);gl.disable(gl.BLEND);}
     const tint=a=>spriteTint.map(v=>v+(1-v)*(a.emissive??0));
@@ -203,5 +222,5 @@ export function createRenderer(canvas){
     for(const [image,record] of spriteTextures)if(!used.has(image)){gl.deleteTexture(record.tex);spriteTextures.delete(image);}
 
   }
-  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
+  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,diagnostics(){return {terrain_uploads:terrainUploads,terrain_cache_hit:terrainCacheHit};},readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
 }

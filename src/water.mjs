@@ -11,8 +11,8 @@ function clip(poly,depth,epsilon=EPS){
   }
   return out;
 }
-export function waterFaces(world,address,grid=world.config.grid){
-  const c=world.get(...address),w=c?.components?.water;
+export function waterFaces(world,address,grid=world.config.grid,c=world.get(...address)){
+  const w=c?.components?.water;
   if(!w||w.fill<=0)return [];
   const level=w.fill*grid.vertical_ft,o=physicalPosition(...address,grid),v=vertices(c.shape,grid),out=[];
   // Unknown is not air; suppress the top of a continued water column.
@@ -36,9 +36,8 @@ export function waterFaces(world,address,grid=world.config.grid){
 }
 // Exposed water curtains between unequal levels. Reuse the solid edge
 // interval subtractor; unsupported raised solids remain top-only.
-export function waterSides(world,address,g=world.config.grid){
-  const c=world.get(...address),w=c?.components?.water,bed=waterBed(c,g);
-  if(!w?.fill||!bed)return [];
+export function waterSides(world,address,g=world.config.grid,c=world.get(...address)){
+  const w=c?.components?.water;if(!w?.fill)return [];const bed=waterBed(c,g);if(!bed)return [];
   const v=vertices(c.shape,g).upper,o=physicalPosition(...address,g),out=[];
   for(let i=0;i<6;i++){
     const j=(i+1)%6,[dq,dr]=EDGE_NEIGHBORS[i],n=world.get(address[0]+dq,address[1]+dr,address[2]),b=waterBed(n,g);
@@ -55,7 +54,7 @@ export function waterSides(world,address,g=world.config.grid){
 }
 export function buildWaterSurfaces(world,addresses,{sides=false}={}){
   const g=world.config.grid,out=[];
-  for(const a of addresses){out.push(...waterFaces(world,a,g));if(sides)out.push(...waterSides(world,a,g));}
+  for(const a of addresses){const c=world.get(...a);if(!c?.components?.water?.fill)continue;out.push(...waterFaces(world,a,g,c));if(sides)out.push(...waterSides(world,a,g,c));}
   return out;
 }
 
