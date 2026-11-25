@@ -32,6 +32,32 @@ with sync_playwright() as p:
     page.locator("#level").select_option("1")
     page.get_by_role("button",name="Full",exact=True).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected[2]===1 && JSON.parse(document.querySelector('#status').textContent).cell.material==='soil'")
+    # Select the visible front side of the new upper cell, not its top.
+    xy=page.evaluate("""async () => {
+      const {project}=await import('/src/camera.mjs');
+      return project([1.25,2.165063509,7.5]);
+    }""")
+    box=page.locator("#scene").bounding_box()
+    page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).face==='side:0'")
+    assert page.locator("#vertex option").count()==4
+    page.locator("#connected").uncheck()
+    page.locator("#vertex").select_option("upper:0")
+    page.locator("#height").fill("1")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper[0]===1")
+    page.locator("#vertex").select_option("lower:0")
+    # Drag the actual lower handle past its paired upper vertex.
+    handle=page.evaluate("""() => JSON.parse(document.querySelector('#status').textContent).handles.find(h=>h.layer==='lower'&&h.index===0)""")
+    page.mouse.move(box["x"]+handle["x"]*box["width"]/900,box["y"]+handle["y"]*box["height"]/450)
+    page.mouse.down()
+    page.mouse.move(box["x"]+handle["x"]*box["width"]/900,box["y"]+(handle["y"]-150)*box["height"]/450,steps=5)
+    page.mouse.up()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.lower[0]===1")
+    assert page.locator("#height").get_attribute("max")=="1"
+    page.locator("#surface").select_option("lower")
+    assert page.locator("#vertex option").count()==7
+    page.locator("#surface").select_option("upper")
+    assert page.locator("#vertex option").count()==7
     page.locator("#actorState").select_option("walk")
     page.locator("#loadActor").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")

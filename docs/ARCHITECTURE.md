@@ -1,4 +1,4 @@
-# Foundation contract (v0.5)
+# Foundation contract (v0.6)
 This independent repository supersedes the height-only Tabletop prototype direction, not its existing implementation. Reference: https://github.com/Superior-MI-Labs/Interactive-Tabletop/blob/agent/hex-world-terrain-elevation-and-world-contract-20261125/HEX_WORLD_CONTRACT.md . Retain axial math and fixed 35.264 degree isometric projection with six yaw directions. Unlike the prototype, all ordinary interiors, caves and buildings share Q/R/Z; portals only for intentionally separate spaces.
 
 ## Authority
@@ -21,3 +21,6 @@ Atlas owns artwork, pivots, region/sequence/state_set/composition definitions in
 
 ## Materials and surface state (v0.5)
 The data-only smi-hex-materials/1 catalog defines substrate colors, vegetation compatibility, weighted variants and demonstration burn duration. Physical substrate remains independent of grass, moisture, leaves, snow and scorch. Surface components are validated and persisted. The world ID and address deterministically select a weighted variant. Renderer uses world-space procedural masks for surface coverage and transparent upright grass tuft sprites anchored to exposed triangles. These are debug assets, not published Atlas terrain assets; no parallel animation format. Reactive fire explicitly consumes grass and leaves, reduces health and snow, and increases scorch only when simulation advances. Persistent/timed visual flames remain independent debug overlays and are not saved. Reactive fire state survives terrain export. No fire spread, regrowth, climate model, true translucent blending or chunk mesh caching yet. The sample catalog is a proof of contracts, not a physical simulation. Unknown materials use a diagnostic color.
+
+## Face editing (v0.6)
+The depth picker selects the logical face of the hit triangle: upper/lower cap or side edge. A cap exposes seven controls; a side exposes both original upper and lower edge endpoints (four controls), even if clipped by neighbors. The face menu can select hidden faces and coincident handles remain separately accessible through the vertex menu. Overlays are editor controls, not render geometry. The same terrain edit planner supplies limits and atomically clamps all edits, including connected corners, to lower <= upper. Equality is permitted for wedge tips and complete excavation; zero-volume triangles are omitted, and fully collapsed cells become air. No automatic movement of the opposite vertex. This is vertical control editing only, not arbitrary mesh deformation.

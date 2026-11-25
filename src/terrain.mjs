@@ -3,9 +3,9 @@ import {cornerRefs,EDGE_NEIGHBORS,oppositeEdge,edgeProfile,exposedEdge,mesh,vert
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 // Connected editing is an explicit atomic operation, not permanent welding.
 // It includes the other two solid cells at the same corner; known air is skipped.
-export function editVertex(world,address,index,layer,height,{connected=false,material="soil"}={}){
+function vertexEditPlan(world,address,index,layer,connected){
   const n=world.config.grid.geometry_subdivisions;
-  assert(["upper","lower"].includes(layer)&&Number.isInteger(height)&&height>=0&&height<=n,"Invalid edit");
+  assert(["upper","lower"].includes(layer),"Invalid vertex layer");
   const refs=cornerRefs(...address,index).slice(0,connected?3:1),targets=[];
   let min=0,max=n;
   for(const [i,ref] of refs.entries()){
@@ -15,6 +15,15 @@ export function editVertex(world,address,index,layer,height,{connected=false,mat
     if(layer==="upper")min=Math.max(min,s.lower[k]);else max=Math.min(max,s.upper[k]);
     targets.push({ref,value});
   }
+  return {targets,min,max};
+}
+export function vertexLimits(world,address,index,layer,{connected=false}={}){
+  const {min,max}=vertexEditPlan(world,address,index,layer,connected);return {min,max};
+}
+export function editVertex(world,address,index,layer,height,{connected=false,material="soil"}={}){
+  const n=world.config.grid.geometry_subdivisions;
+  assert(Number.isInteger(height)&&height>=0&&height<=n,"Invalid edit height");
+  const {targets,min,max}=vertexEditPlan(world,address,index,layer,connected);
   const h=Math.min(max,Math.max(min,height));
   const edits=targets.map(({ref,value})=>{
     value.shape[layer][ref.index]=h;
