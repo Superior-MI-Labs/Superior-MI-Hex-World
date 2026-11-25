@@ -2,7 +2,7 @@ import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
 import {validateEntity,validAddress,visualSelection,anchorHeight,colliderActive} from "./entities.mjs";
 import {interactionTags} from "./interactions.mjs";
-import {validateEnvironment} from "./environment.mjs";
+import {validateEnvironment,validateWater} from "./environment.mjs";
 export {shape} from "./geometry.mjs";
 // Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
 const int = Number.isSafeInteger;
@@ -44,6 +44,7 @@ function cell(value, subdivisions) {
   const result={...copy(value),shape:geometry};
   if(result.components?.surface!==undefined)result.components.surface=surface(result.components.surface);
   if(result.components?.interaction_tags!==undefined)result.components.interaction_tags=interactionTags(result.components.interaction_tags);
+  if(result.components?.water!==undefined)result.components.water=validateWater(result.components.water);
   if(result.components?.scatter_hidden!==undefined)result.components.scatter_hidden=validateScatterKeys(result.components.scatter_hidden);
   return result;
 }

@@ -67,3 +67,6 @@ v0.26: persistent world lighting override, terrain ambient occlusion, approximat
 
 
 v0.27: persistent attached colored lights, derived fire illumination, world-space fragment lighting and whole-sprite self-lighting.
+
+
+v0.28: persisted authored water fill and flow, terrain-clipped water surfaces and depth-tested animated water rendering.

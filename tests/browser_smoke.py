@@ -158,6 +158,21 @@ with sync_playwright() as p:
     assert 105<gradient[1][0]<150 and 105<gradient[1][2]<150,materials
     assert gradient[2][2]>225 and gradient[2][0]<30,materials
     assert all(120<v<136 for v in materials["mixed"][:3]),materials
+    # Water blends over the bed and respects opaque depth; flow uses visual time.
+    liquid=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs');
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const tri=(z,color)=>({kind:'top',points:[[0,0,z],[64,0,z],[0,64,z]],color});
+      const bed=tri(1,[.4,.4,.4]),water={points:tri(2).points,flow:[1,0],depth:[2,2,2]};
+      r.render([bed],view,{pattern:false,water:[water]});const wet=r.readPixel(10,10);
+      r.render([bed],view,{pattern:false,water:[water],visualTime:1.3});const moved=r.readPixel(10,10);
+      r.render([bed,tri(3,[1,0,0])],view,{pattern:false,water:[water]});const blocked=r.readPixel(10,10);
+      r.render([bed],view,{pattern:false});return {wet,moved,blocked,dry:r.readPixel(10,10)};
+    }""")
+    assert liquid["wet"][2]>liquid["wet"][0] and liquid["wet"]!=liquid["dry"],liquid
+    assert liquid["blocked"][0]>240 and liquid["blocked"][2]<10,liquid
+    assert liquid["wet"]!=liquid["moved"],liquid
     # Per-fragment local light illuminates terrain and sprites in world space.
     local_light=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -496,6 +511,21 @@ with sync_playwright() as p:
     page.locator("#showColliders").uncheck()
     page.locator("#removeObject").click()
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===1&&s.scatter_candidates===n-1}",arg=count)
+    page.get_by_role("button",name="Basin",exact=True).click()
+    page.locator("summary",has_text="Water editing").click()
+    page.locator("#waterFill").fill(".5")
+    page.locator("#waterFlowX").fill("2")
+    page.locator("#applyWater").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).water_triangles>0")
+    with page.expect_download() as water_save:
+        page.locator("#save").click()
+    saved=json.loads(Path(water_save.value.path()).read_text())
+    assert any(c["value"].get("components",{}).get("water")=={"fill":.5,"flow_ft_s":[2,0]} for chunk in saved["chunks"] for c in chunk["cells"])
+    page.locator("#showWater").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).water_triangles===0")
+    page.locator("#showWater").check()
+    page.locator("#drainWater").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).water_triangles===0")
     assert not errors,errors
     print("GPU depth, Atlas sprite load, scatter promotion, vertical construction and browser smoke passed")
     browser.close()

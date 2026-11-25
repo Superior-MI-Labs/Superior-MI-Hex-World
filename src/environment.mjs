@@ -27,6 +27,11 @@ export function validateLightSource(l){
   assert(record(l)&&Array.isArray(l.color)&&l.color.length===3&&l.color.every(v=>finite(v,0,1))&&finite(l.radius_ft,.1,60)&&finite(l.intensity,0,2)&&finite(l.offset_z_ft??0,-20,100)&&finite(l.flicker??0,0,1)&&finite(l.emissive??0,0,1),"Invalid point light");
   return {color:[...l.color],radius_ft:l.radius_ft,intensity:l.intensity,offset_z_ft:l.offset_z_ft??0,flicker:l.flicker??0,emissive:l.emissive??0};
 }
+// Local fill height is a fraction of the cell, not a second solid shape.
+export function validateWater(w){
+  assert(record(w)&&finite(w.fill,0,1)&&Array.isArray(w.flow_ft_s??[0,0])&&(w.flow_ft_s??[0,0]).length===2&&(w.flow_ft_s??[0,0]).every(v=>finite(v,-30,30))&&Math.hypot(...(w.flow_ft_s??[0,0]))<=30,"Invalid water component");
+  return {fill:w.fill,flow_ft_s:[...(w.flow_ft_s??[0,0])]};
+}
 export function validateEnvironment(e={wind:CALM,zones:[]}){
   assert(record(e)&&Array.isArray(e.zones??[])&&(e.zones??[]).length<=128,"Invalid environment");
   const ids=new Set(),zones=(e.zones??[]).map(z=>{

@@ -7,7 +7,7 @@ out vec3 v_color; out vec2 v_uv; out vec3 v_cover; out float v_rim; out vec2 v_m
 void main(){gl_Position=vec4(a_position,1.0);v_color=a_color;v_uv=a_uv;v_cover=a_cover;v_rim=a_rim;v_mask_uv=a_mask_uv;v_weights=a_weights;v_shade=a_shade;v_world=a_world;}`;
 const FS=`#version 300 es
 precision highp float;
-in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; in vec4 v_weights; in float v_shade; in vec3 v_world; uniform int u_light_count; uniform vec4 u_light_pos[${MAX_POINT_LIGHTS}]; uniform vec4 u_light_rgb[${MAX_POINT_LIGHTS}]; uniform sampler2D u_texture; uniform sampler2D u_layer1; uniform sampler2D u_layer2; uniform sampler2D u_layer3; uniform sampler2D u_mask; uniform int u_mode; uniform float u_detail_strength; uniform ivec4 u_color_modes; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
+in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; in vec4 v_weights; in float v_shade; in vec3 v_world; uniform float u_water_time; uniform int u_light_count; uniform vec4 u_light_pos[${MAX_POINT_LIGHTS}]; uniform vec4 u_light_rgb[${MAX_POINT_LIGHTS}]; uniform sampler2D u_texture; uniform sampler2D u_layer1; uniform sampler2D u_layer2; uniform sampler2D u_layer3; uniform sampler2D u_mask; uniform int u_mode; uniform float u_detail_strength; uniform ivec4 u_color_modes; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
 float coverage(float amount,float noise){
@@ -35,6 +35,15 @@ void main(){
   if(u_mode==2){if(t.a<0.5)discard;color=vec4(spriteLight(t.rgb),1.0);}
   else if(u_mode==3){if(t.a<0.98)discard;color=vec4(spriteLight(t.rgb),1.0);}
   else if(u_mode==4){if(t.a<=0.02||t.a>=0.98)discard;color=vec4(spriteLight(t.rgb),t.a);}
+  else if(u_mode==6){
+    float depth=max(0.0,v_cover.z);
+    vec2 p=v_world.xy-v_cover.xy*u_water_time;
+    float ripple=0.5+0.5*sin(p.x*2.2+p.y*1.7+u_water_time*1.8)*sin(p.y*2.8-p.x*.9-u_water_time*1.3);
+    float deep=1.0-exp(-depth*.5);
+    vec3 base=mix(vec3(.25,.66,.63),vec3(.035,.23,.42),deep);
+    base+=vec3(.12,.20,.23)*pow(ripple,6.0);
+    color=vec4(base*(vec3(v_shade)+localLight()),mix(.34,.86,deep));
+  }
   else if(u_mode==5){if(any(lessThan(v_uv,vec2(0.0)))||any(greaterThan(v_uv,vec2(1.0))))discard;color=vec4(0.0,0.0,0.0,t.a*v_color.r);}
   else {
     vec3 base=v_color;
@@ -68,6 +77,7 @@ export function createRenderer(canvas){
   for(const [name,size,offset] of [["a_position",3,0],["a_color",3,12],["a_uv",2,24],["a_cover",3,32],["a_rim",1,44],["a_mask_uv",2,48],["a_weights",4,56],["a_shade",1,72],["a_world",3,76]]){
     const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,88,offset);
   }
+  const waterTime=gl.getUniformLocation(program,"u_water_time");
   const mode=gl.getUniformLocation(program,"u_mode"),lightCount=gl.getUniformLocation(program,"u_light_count"),lightPos=gl.getUniformLocation(program,"u_light_pos[0]"),lightRGB=gl.getUniformLocation(program,"u_light_rgb[0]");
   const uniforms=Object.fromEntries(["u_detail_strength","u_color_modes","u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
   gl.uniform1i(gl.getUniformLocation(program,"u_texture"),0);gl.uniform1i(gl.getUniformLocation(program,"u_mask"),1);
@@ -124,8 +134,9 @@ export function createRenderer(canvas){
     return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
-  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[]}={}){
+  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],visualTime=0}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    gl.uniform1f(waterTime,visualTime);
     const lights=pointLights.slice(0,MAX_POINT_LIGHTS);
     gl.uniform1i(lightCount,lights.length);if(lights.length){gl.uniform4fv(lightPos,lights.flatMap(l=>[...l.point,l.radius]));gl.uniform4fv(lightRGB,lights.flatMap(l=>[...l.color,l.intensity]));}
     gl.uniform1f(uniforms.u_detail_strength,style?.detail.strength??.25);
@@ -135,8 +146,9 @@ export function createRenderer(canvas){
     gl.uniform3fv(uniforms.u_leaf_color,transitions.leaf_color??[.65,.34,.12]);gl.uniform3fv(uniforms.u_snow_color,transitions.snow_color??[.91,.94,.97]);gl.uniform3fv(uniforms.u_scorch_color,transitions.scorch_color??[.15,.13,.11]);
     gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.depthMask(true);gl.disable(gl.BLEND);
     const projected=faces.map(f=>({f,p:f.points.map(view)})),actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
+    const waterProjected=water.map(f=>({f,p:f.points.map(view)}));
     let low=Infinity,high=-Infinity;
-    for(const p of [...projected.flatMap(f=>f.p),...actors.flatMap(a=>a.quad)]){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
+    for(const p of [...projected.flatMap(f=>f.p),...actors.flatMap(a=>a.quad),...waterProjected.flatMap(f=>f.p)]){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
     const range=Math.max(1,high-low),center=(low+high)/2;
     const pack=(out,p,color,uv,cover=[0,0,0],rim=-1,maskUV=uv,weights=[1,0,0,0],shade=1,world=[0,0,0])=>out.push(2*p.x/canvas.width-1,1-2*p.y/canvas.height,-(p.depth-center)*1.8/range,...color,...uv,...cover,rim,...maskUV,...weights,shade,...world);
     const batchesTerrain=new Map();
@@ -177,6 +189,12 @@ export function createRenderer(canvas){
         for(const i of [0,1,2,0,2,3])pack(batch,quad[i],tint(actor),uv[i],undefined,undefined,undefined,undefined,1,actor.points[i]);
       }
       if(current)draw(batch,current,4);gl.depthMask(true);gl.disable(gl.BLEND);
+    }
+    if(waterProjected.length&&!debug){
+      const data=[],shade=light?light.ambient+(1-light.ambient)*Math.max(0,light.direction[2]/lightLength):1;
+      waterProjected.sort((a,b)=>a.p.reduce((s,p)=>s+p.depth,0)-b.p.reduce((s,p)=>s+p.depth,0));
+      for(const {f,p} of waterProjected)for(let i=0;i<3;i++)pack(data,p[i],[1,1,1],[0,0],[...f.flow,f.depth[i]],-1,undefined,undefined,shade,f.points[i]);
+      gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,ground,6);gl.depthMask(true);gl.disable(gl.BLEND);
     }
     for(const [image,record] of spriteTextures)if(!used.has(image)){gl.deleteTexture(record.tex);spriteTextures.delete(image);}
 
