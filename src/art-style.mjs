@@ -67,6 +67,7 @@ function validateFamilies(families,manifest){
     assert(f.max_grade===undefined||Number.isFinite(f.max_grade)&&f.max_grade>=0&&f.max_grade<=10,"Invalid scatter grade");
     assert(record(f.surface??{}),"Invalid scatter surface constraints");
     for(const [k,r] of Object.entries(f.surface??{}))assert(["growth","health","moisture","leaves","snow","scorch"].includes(k)&&range(r,0,1),"Invalid scatter surface range");
+    assert(f.spacing_ft===undefined||Number.isFinite(f.spacing_ft)&&f.spacing_ft>=0&&f.spacing_ft<=5,"Invalid scatter spacing");
     assert(f.contact===undefined||typeof f.contact==="boolean","Invalid scatter contact");
     assert(f.shadow===undefined||typeof f.shadow==="boolean","Invalid scatter shadow");
     assert(Array.isArray(f.variants)&&f.variants.length>0&&f.variants.length<=32,"Invalid scatter variants");
@@ -201,7 +202,7 @@ export function scatterSamples(face,seed,profile,scale){
       let roll=rand("variant")*total,variant=f.variants.at(-1);
       for(const v of f.variants){roll-=v.weight;if(roll<0){variant=v;break;}}
       const [lo,hi]=variant.height_scale;
-      out.push({family:f.id,variant:variant.id,point,scale:lo+(hi-lo)*rand("height"),orientation:Math.floor(rand("orientation")*6),contact:!!f.contact,shadow:!!f.shadow});
+      out.push({family:f.id,variant:variant.id,address:[...face.address],slot:i,key:JSON.stringify([profile.id,f.id,face.triangle,i]),spacing:f.spacing_ft??0,lod_px:f.far_px_per_ft+i/f.samples_per_triangle*(f.near_px_per_ft-f.far_px_per_ft),rank:rand("spacing"),point,scale:lo+(hi-lo)*rand("height"),orientation:Math.floor(rand("orientation")*6),contact:!!f.contact,shadow:!!f.shadow});
     }
   }
   return out;

@@ -1,6 +1,6 @@
 import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
-import {validateEntity,validAddress,visualSelection} from "./entities.mjs";
+import {validateEntity,validAddress,visualSelection,anchorHeight} from "./entities.mjs";
 import {interactionTags} from "./interactions.mjs";
 import {validateEnvironment} from "./environment.mjs";
 export {shape} from "./geometry.mjs";
@@ -44,7 +44,11 @@ function cell(value, subdivisions) {
   const result={...copy(value),shape:geometry};
   if(result.components?.surface!==undefined)result.components.surface=surface(result.components.surface);
   if(result.components?.interaction_tags!==undefined)result.components.interaction_tags=interactionTags(result.components.interaction_tags);
+  if(result.components?.scatter_hidden!==undefined)result.components.scatter_hidden=validateScatterKeys(result.components.scatter_hidden);
   return result;
+}
+function validateScatterKeys(keys){
+  requireThat(Array.isArray(keys)&&keys.length<=512&&keys.every(k=>typeof k==="string"&&k.length>0&&k.length<=4096)&&new Set(keys).size===keys.length,"Invalid scatter suppression keys");return [...keys].sort();
 }
 export class World {
   #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map(); #effects=new Map(); #clockState=null;
@@ -63,6 +67,13 @@ export class World {
   getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
   putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);}
   removeEntity(id){return this.#entities.delete(id);}
+  promoteScatter(key,value){
+    const e=validateEntity(value),c=this.get(...e.address);requireThat(c&&e.anchor==="surface"&&anchorHeight(e,c,this.#config.grid)!==undefined,"Scatter needs supporting terrain");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");
+    const hidden=c.components?.scatter_hidden??[];requireThat(!hidden.includes(key),"Scatter already promoted");
+    const keys=validateScatterKeys([...hidden,key]);
+    // Both records are validated before the synchronous commit; no partial entity on failure.
+    this.set(...e.address,{...c,components:{...c.components,scatter_hidden:keys}});this.#entities.set(e.id,e);
+  }
   setEntityAppearance(id,selection){
     const e=this.#entities.get(id);requireThat(e,"Unknown entity");
     const {inputs,slots,preset,...visual}=e.visual;

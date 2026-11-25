@@ -52,3 +52,6 @@ v0.21: canonical self-describing Atlas spatial profiles automatically resolve vi
 
 
 v0.22: deterministic multi-family decorative scatter, canonical spatial asset adoption, seasonal variants and hash-pinned style archives.
+
+
+v0.23: stable same-level scatter spacing and explicit persistent object promotion with saved suppression.
