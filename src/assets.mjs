@@ -2,6 +2,7 @@
 // the pinned canonical renderer, then exposes a raster for the GPU billboard.
 import {AssetRegistry} from "./core.mjs";
 import {visualSelection} from "./entities.mjs";
+import {adoptSpatialProfile} from "./spatial-assets.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const pair=a=>Array.isArray(a)&&a.length===2&&a.every(Number.isFinite);
 const safePath=p=>typeof p==="string"&&/^[a-zA-Z0-9_./-]+$/.test(p)&&!p.startsWith("/")&&p.split("/").every(x=>x&&x!=="."&&x!=="..");
@@ -11,7 +12,7 @@ export function validateSpritePack(pack,entry){
   assert(pack.assets.length<=10000,"Pack exceeds asset limit");
   const map=new Map();for(const a of pack.assets){assert(id(a?.id)&&!map.has(a.id),"Duplicate/invalid asset ID");map.set(a.id,a);}
   const visited=new Set(),active=new Set(),costs=new Map();
-  let hasComposition=false;
+  let needsSlotValidation=false;
   const size=a=>pair(a)&&a.every(v=>Number.isInteger(v)&&v>0&&v<=4096);
   const bounded=n=>Number.isFinite(n)&&Math.abs(n)<=16384;
   function visit(key){
@@ -32,7 +33,7 @@ export function validateSpritePack(pack,entry){
     }else if(a.kind==="state_set"){
       assert(a.states&&Object.hasOwn(a.states,a.default_state),"Invalid state set");for(const key of Object.values(a.states))cost+=visit(key);
     }else if(a.kind==="composition"){
-      hasComposition=true;
+      needsSlotValidation=true;
       assert(size(a.size_px)&&Array.isArray(a.layers)&&a.layers.length>0&&a.layers.length<=128,"Invalid fixed world composition");
       const slotCore=globalThis.VisualAtlasSlots;assert(slotCore,"Missing Atlas slot resolver");
       if(a.behavior!==undefined){const interaction=globalThis.VisualAtlasInteraction;assert(interaction,"Missing Atlas interaction resolver");const errors=interaction.check(a);assert(!errors.length,"Invalid Atlas behavior: "+errors[0]);}
@@ -49,11 +50,17 @@ export function validateSpritePack(pack,entry){
         for(const ref of choices)cost+=visit(ref);
       }
     }else throw Error("Unsupported world sprite kind: "+a.kind);
+    if(a.spatial!==undefined){
+      needsSlotValidation=true;
+      const slots=globalThis.VisualAtlasSlots;assert(slots?.spatialErrors,"Missing Atlas spatial validator");
+      const errors=slots.spatialErrors(a,id=>map.get(id));assert(!errors.length,"Invalid Atlas spatial profile: "+errors[0]);
+      for(const ref of slots.spatialRefs(a))cost+=visit(ref);
+    }
     assert(cost<=4096,"World sprite dependency expansion exceeds limit");
     active.delete(key);visited.add(key);costs.set(key,cost);return cost;
   }
   visit(entry);
-  if(hasComposition){const errors=globalThis.VisualAtlasSlots.validate({...pack,assets:[...visited].map(id=>map.get(id))});assert(!errors.length,"Invalid Atlas composition: "+errors[0]);}
+  if(needsSlotValidation){const errors=globalThis.VisualAtlasSlots.validate({...pack,assets:[...visited].map(id=>map.get(id))});assert(!errors.length,"Invalid Atlas composition: "+errors[0]);}
   return map;
 }
 export function httpProvider(fetcher=fetch){
@@ -97,7 +104,7 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest
       finally{if(temporary)URL.revokeObjectURL(target);}
     })();images.set(key,p);return p;
   }
-  return {createRaster({asset,state=null,regionOnly=false,requireState=false,...options}){
+  return {describe(asset){return structuredClone(validateSpritePack(pack,asset).get(asset));},createRaster({asset,state=null,regionOnly=false,requireState=false,...options}){
   const map=validateSpritePack(pack,asset);
   const root=map.get(asset);
   if(regionOnly)assert(root.kind==="region","Static texture must reference an Atlas region");
@@ -122,14 +129,20 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest
 // Share decoded sheets and archive resolution across object variants.
 // Failed sessions are retryable; bound the session cache, not world records.
 const packSessions=new Map();
-export async function createAtlasRaster({manifest,archive_sha256,...binding},registry){
-  if(registry)return (await openAtlasPack(manifest,registry,archive_sha256)).createRaster(binding);
+async function packSession(manifest,archive_sha256,registry){
+  if(registry)return openAtlasPack(manifest,registry,archive_sha256);
   const key=JSON.stringify([new URL(manifest,location.href).href,archive_sha256??null]);
   if(!packSessions.has(key)){
     const p=openAtlasPack(manifest,undefined,archive_sha256).catch(e=>{packSessions.delete(key);throw e;});packSessions.set(key,p);
     if(packSessions.size>16)packSessions.delete(packSessions.keys().next().value);
   }
-  return (await packSessions.get(key)).createRaster(binding);
+  return packSessions.get(key);
+}
+export async function createAtlasRaster({manifest,archive_sha256,...binding},registry){
+  return (await packSession(manifest,archive_sha256,registry)).createRaster(binding);
+}
+export async function resolveAtlasBinding(raw){
+  const pack=await packSession(raw.manifest,raw.archive_sha256);return adoptSpatialProfile(raw,pack.describe(raw.asset));
 }
 
 export async function createAtlasSprite({height_ft=4,...binding},registry){

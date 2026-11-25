@@ -46,3 +46,6 @@ v0.19: direct Atlas ZIP runtime loading, optional archive hash verification, fix
 
 
 v0.20: published Atlas discovery, generated composition controls and reach-checked authored visual use.
+
+
+v0.21: canonical self-describing Atlas spatial profiles automatically resolve visual height, compatible directional views and wind response.

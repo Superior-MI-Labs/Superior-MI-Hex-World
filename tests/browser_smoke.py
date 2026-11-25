@@ -14,9 +14,10 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).atlas_sprite")
     # Directional fixture uses existing measured grass regions as view IDs, not authored view art.
-    vb={"manifest":"./examples/meadow-art/manifest.json","asset":"smi.hex.grass.01","height_ft":2,"views":["smi.hex.grass.01","smi.hex.grass.02","smi.hex.grass.03","smi.hex.grass.01","smi.hex.grass.02","smi.hex.grass.03"]}
+    vb={"manifest":"./examples/meadow-art/manifest.json","asset":"smi.hex.grass.01"}
     page.locator("#importObjectBinding").set_input_files({"name":"views.json","mimeType":"application/json","buffer":json.dumps(vb).encode()})
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
+    page.wait_for_function("document.querySelector('#spatialStatus').textContent.includes('2.5 ft · 6 views · wind-responsive')")
     page.locator("#placeActor").click()
     page.locator("#objects").select_option(index=1)
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_object_view==='smi.hex.grass.01'")

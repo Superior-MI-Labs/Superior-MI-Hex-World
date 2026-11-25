@@ -3,3 +3,5 @@ Unmodified Visual Atlas renderer dependencies from https://github.com/Superior-M
 Collection resolver, shared ZIP reader and JSZip vendored without edits from Atlas f0621f06fa2b74cb56bed8e803e199b5c667951d (JSZip retains its upstream license notice). The existing renderer/slot/timeline/visual modules remain pinned to the audited renderer revision above.
 
 Unmodified interaction-core.js copied from Atlas b780bcb6f8b63c7c6d0fd72f1d6c5eea83655fce for canonical typed visual event dispatch.
+
+Updated slot-core.js and collection-core.js together from Atlas 2518db388618b95fa97c2d4319799199971ecb74 to support canonical spatial profile validation and directional dependencies. No local fork.

@@ -5,7 +5,7 @@ import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle} from "./editor.mjs";
 import {project,pickFace,billboard,visibleTriangle} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
-import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
+import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
 import {ATLAS_CATALOG,fetchCatalog,searchCatalog} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance} from "./asset-interactions.mjs";
 import {fetchStyle,vegetationSamples,vegetationRaster,vegetationWind} from "./art-style.mjs";
@@ -195,8 +195,8 @@ async function qualifyBinding(raw){
 }
 async function loadBinding(raw){
   const request=++spriteRequest;$("assetStatus").textContent="Loading sprite";
-  try{const {binding,next}=await qualifyBinding(raw);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";}
-  catch(e){if(request===spriteRequest){actor=null;$("assetStatus").textContent=e.message;}}
+  try{const resolved=await resolveAtlasBinding(raw),{binding,next}=await qualifyBinding(resolved.binding);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";$("spatialStatus").textContent=resolved.warnings.join("; ")||("Height "+binding.height_ft+" ft · "+(binding.views?"6 views":"billboard")+(binding.wind?" · wind-responsive":""));}
+  catch(e){if(request===spriteRequest){actor=null;$("assetStatus").textContent=e.message;$("spatialStatus").textContent="";}}
 }
 let appearanceRequest=0,appearanceKey=null,inspectRequest=0;
 function syncAppearance(){
@@ -244,7 +244,7 @@ $("refreshCatalog").onclick=async()=>{
   }catch(e){if(request===catalogRequest)$("catalogStatus").textContent=e.message;}
 };
 for(const k of ["catalogSearch","catalogCapability","catalogComponents"])$(k).oninput=refreshCatalog;
-$("loadCatalogAsset").onclick=()=>{const a=catalogMatches[Number($("catalogAssets").value)];if(a)loadBinding({...a.binding,height_ft:Number($("objectHeight").value)});};
+$("loadCatalogAsset").onclick=()=>{const a=catalogMatches[Number($("catalogAssets").value)];if(a){const {height_ft,...source}=a.binding;loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);}};
 
 $("applyAppearance").onclick=async()=>{
   const id=$("objects").value,e=world.getEntity(id),request=++appearanceRequest,owner=world;if(!e)return;

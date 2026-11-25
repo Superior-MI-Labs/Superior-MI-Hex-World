@@ -48,7 +48,25 @@
       "pivot": [
         0.5,
         1
-      ]
+      ],
+      "spatial": {
+        "height_ft": 2.5,
+        "views": {
+          "elevation_deg": 35.264,
+          "assets": [
+            "smi.hex.grass.01",
+            "smi.hex.grass.02",
+            "smi.hex.grass.03",
+            "smi.hex.grass.01",
+            "smi.hex.grass.02",
+            "smi.hex.grass.03"
+          ]
+        },
+        "wind": {
+          "bend": 0.35,
+          "reference_speed_ft_s": 20
+        }
+      }
     },
     {
       "id": "smi.hex.grass.02",
@@ -104,6 +122,19 @@
       "states": {
         "calm": "smi.hex.grass.01",
         "wind": "smi.hex.grass.wind.fixture"
+      },
+      "spatial": {
+        "height_ft": 2,
+        "wind": {
+          "bend": 0.4,
+          "reference_speed_ft_s": 20,
+          "states": [
+            {
+              "min_speed_ft_s": 8,
+              "state": "wind"
+            }
+          ]
+        }
       }
     }
   ]
