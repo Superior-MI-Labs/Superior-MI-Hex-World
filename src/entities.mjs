@@ -1,6 +1,7 @@
 // A placed object is world data; rasters and animation frames are not.
 import {hasVolume,sampleSurface} from "./geometry.mjs";
 import {interactionTags} from "./interactions.mjs";
+import {validateWindResponse} from "./environment.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const id=s=>typeof s==="string"&&s.length>0&&s.length<=200;
 export const validAddress=a=>Array.isArray(a)&&a.length===3&&a.every(Number.isSafeInteger);
@@ -12,7 +13,7 @@ export function spriteBinding(b){
   const height_ft=b.height_ft??4;
   assert(Number.isFinite(height_ft)&&height_ft>0&&height_ft<=100,"Invalid sprite height");
   assert(b.walk_state===undefined||b.walk_state===null||id(b.walk_state),"Invalid walking state");
-  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.walk_state?{walk_state:b.walk_state}:{})};
+  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
 }
 export function validateEntity(e){
   assert(e&&id(e.id)&&validAddress(e.address),"Invalid entity");

@@ -1,0 +1,63 @@
+// Spatial host conditions and pure visual responses. No physics or renderer state.
+const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
+const finite=(v,min,max)=>Number.isFinite(v)&&v>=min&&v<=max;
+const record=v=>v&&typeof v==="object"&&!Array.isArray(v);
+const token=v=>typeof v==="string"&&v.length>0&&v.length<=200;
+const ints=(a,n)=>Array.isArray(a)&&a.length===n&&a.every(Number.isSafeInteger);
+export const CALM=Object.freeze({velocity_ft_s:Object.freeze([0,0]),gust:0});
+export function validateWind(w){
+  assert(record(w)&&Array.isArray(w.velocity_ft_s)&&w.velocity_ft_s.length===2&&w.velocity_ft_s.every(v=>finite(v,-150,150))&&Math.hypot(...w.velocity_ft_s)<=150&&finite(w.gust??0,0,1),"Invalid wind");
+  return {velocity_ft_s:[...w.velocity_ft_s],gust:w.gust??0};
+}
+export function validateEnvironment(e={wind:CALM,zones:[]}){
+  assert(record(e)&&Array.isArray(e.zones??[])&&(e.zones??[]).length<=128,"Invalid environment");
+  const ids=new Set(),zones=(e.zones??[]).map(z=>{
+    assert(record(z)&&token(z.id)&&!ids.has(z.id)&&ints(z.center,2)&&Number.isInteger(z.radius)&&z.radius>=0&&z.radius<=128&&ints(z.levels,2)&&z.levels[0]<=z.levels[1],"Invalid wind zone");
+    ids.add(z.id);return {id:z.id,center:[...z.center],radius:z.radius,levels:[...z.levels],wind:validateWind(z.wind)};
+  });
+  return {wind:validateWind(e.wind??CALM),zones};
+}
+export function windAt(field,address){
+  let w=field.wind;
+  // Later matching zones override earlier zones. Support-cell Z is explicit.
+  for(const zone of field.zones){
+    const dq=address[0]-zone.center[0],dr=address[1]-zone.center[1];
+    if(address[2]>=zone.levels[0]&&address[2]<=zone.levels[1]&&Math.max(Math.abs(dq),Math.abs(dr),Math.abs(dq+dr))<=zone.radius)w=zone.wind;
+  }
+  return w;
+}
+export function sampleWind(w,point,seconds){
+  const phase=point[0]*.17+point[1]*.13+seconds*1.8;
+  const factor=1+w.gust*(.7*Math.sin(phase)+.3*Math.sin(phase*.61+1.4));
+  return w.velocity_ft_s.map(v=>v*factor);
+}
+export function validateWindResponse(w){
+  assert(record(w)&&finite(w.bend??0,0,1)&&finite(w.reference_speed_ft_s??20,.1,150)&&Array.isArray(w.states??[])&&(w.states??[]).length<=16,"Invalid wind response");
+  let previous=-1;
+  const states=(w.states??[]).map(s=>{
+    assert(record(s)&&finite(s.min_speed_ft_s,0,300)&&s.min_speed_ft_s>previous&&token(s.state),"Invalid wind state threshold");previous=s.min_speed_ft_s;
+    return {min_speed_ft_s:s.min_speed_ft_s,state:s.state};
+  });
+  return {bend:w.bend??0,reference_speed_ft_s:w.reference_speed_ft_s??20,states};
+}
+export function windState(response,wind,neutral=null){
+  let state=neutral;if(!response)return state;
+  // Use sustained speed, not gusts, to avoid state thrashing.
+  const speed=Math.hypot(...wind.velocity_ft_s);
+  for(const s of response.states)if(speed>=s.min_speed_ft_s)state=s.state;
+  return state;
+}
+export function windOffset(response,wind,height){
+  if(!response||!response.bend)return [0,0];
+  const speed=Math.hypot(...wind);
+  if(speed<1e-8)return [0,0];
+  const amount=height*response.bend*Math.min(1,speed/response.reference_speed_ft_s);
+  return wind.map(v=>v/speed*amount);
+}
+// Combine contact and wind on the same original quad; cap total tip displacement.
+export function composeBend(neutral,contact,offset,height){
+  const dx=contact[0][0]-neutral[0][0]+offset[0],dy=contact[0][1]-neutral[0][1]+offset[1],d=Math.hypot(dx,dy);
+  if(d<1e-8)return neutral;
+  const scale=Math.min(1,height/d);
+  return neutral.map((p,i)=>i<2?[p[0]+dx*scale,p[1]+dy*scale,p[2]]:p);
+}

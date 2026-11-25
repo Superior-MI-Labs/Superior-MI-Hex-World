@@ -2,6 +2,7 @@ import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
 import {validateEntity,validAddress} from "./entities.mjs";
 import {interactionTags} from "./interactions.mjs";
+import {validateEnvironment} from "./environment.mjs";
 export {shape} from "./geometry.mjs";
 // Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
 const int = Number.isSafeInteger;
@@ -18,7 +19,7 @@ export function validateWorld(config) {
   requireThat(g.geometry_subdivisions===2,"This world profile requires two geometry subdivisions");
   requireThat(Array.isArray(g.chunk_size)&&g.chunk_size.length===3&&g.chunk_size.every(n=>int(n)&&n>0&&n<=256),"Invalid chunk dimensions");
   requireThat(["frozen","manual","turn-based","real-time","scaled"].includes(config.simulation?.mode)&&positive(config.simulation?.rate),"Invalid clock configuration");
-  return copy(config);
+  const out=copy(config);if(out.environment!==undefined)out.environment=validateEnvironment(out.environment);return out;
 }
 export function chunkOf(q,r,z,size=[16,16,16]) {
   addressKey(q,r,z);
@@ -49,6 +50,8 @@ export class World {
   #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map(); #effects=new Map(); #clockState=null;
   constructor(config){this.#config=validateWorld(config);}
   get config(){return copy(this.#config);}
+  get environment(){return validateEnvironment(this.#config.environment);}
+  setEnvironment(value){this.#config.environment=validateEnvironment(value);}
   get chunkCount(){return this.#chunks.size;}
   get entityCount(){return this.#entities.size;}
   effects(){return [...this.#effects.values()].map(copy);}

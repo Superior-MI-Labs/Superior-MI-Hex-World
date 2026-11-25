@@ -1,6 +1,7 @@
 // Presentation profile: binds existing Atlas IDs to Hex World visual roles.
 import {openAtlasPack} from "./assets.mjs";
 import {stableUnit} from "./materials.mjs";
+import {validateWindResponse,windState} from "./environment.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const positive=n=>Number.isFinite(n)&&n>0;
 const id=s=>typeof s==="string"&&s.length>0&&s.length<=2048;
@@ -9,7 +10,8 @@ export function artBinding(value,defaultManifest){
   const b=typeof value==="string"?{asset:value,manifest:defaultManifest}:value;
   assert(b&&id(b.asset)&&id(b.manifest),"Invalid art binding");
   const url=new URL(b.manifest,"https://local.invalid/");assert(["http:","https:"].includes(url.protocol)&&!url.username&&!url.password,"Invalid art manifest URL");
-  return {asset:b.asset,manifest:b.manifest};
+  assert(b.state===undefined||b.state===null||id(b.state),"Invalid art state");
+  return {asset:b.asset,manifest:b.manifest,...(b.state!=null?{state:b.state}:{})};
 }
 export function resolveStyleProfile(profile,baseURL){
   const s=validateStyle(profile),resolve=b=>{const x=artBinding(b,s.manifest);return {...x,manifest:new URL(x.manifest,baseURL).href};};
@@ -26,19 +28,33 @@ export function validateStyle(s){
   assert(l&&Number.isFinite(l.ambient)&&l.ambient>=0&&l.ambient<=1&&Array.isArray(l.direction)&&l.direction.length===3&&l.direction.every(Number.isFinite)&&Math.hypot(...l.direction)>0,"Invalid lighting");
   assert(v&&v.assets&&typeof v.assets==="object"&&!Array.isArray(v.assets)&&Object.keys(v.assets).length>0&&Object.keys(v.assets).length<=512&&Number.isInteger(v.samples_per_triangle)&&v.samples_per_triangle>=1&&v.samples_per_triangle<=8&&positive(v.min_height_ft)&&positive(v.max_height_ft)&&v.max_height_ft>=v.min_height_ft&&positive(v.far_px_per_ft)&&v.near_px_per_ft>v.far_px_per_ft,"Invalid vegetation profile");
   for(const b of Object.values(v.assets))artBinding(b,s.manifest);
-  return structuredClone(s);
+  assert(v.wind===undefined||(v.wind&&typeof v.wind==="object"&&!Array.isArray(v.wind)),"Invalid vegetation wind map");
+  const out=structuredClone(s);
+  if(v.wind!==undefined){for(const [k,w] of Object.entries(v.wind)){assert(own(v.assets,k),"Unknown wind variant: "+k);out.vegetation.wind[k]=validateWindResponse(w);}}
+  return out;
 }
 export async function loadStyle(profile,{baseURL=location.href,openPack=openAtlasPack}={}){
   const s=resolveStyleProfile(profile,baseURL),packs=new Map(),rasters=new Map();
-  async function load(binding){
-    const {manifest,asset}=binding,key=JSON.stringify([manifest,asset]);
+  async function load(binding,regionOnly=false){
+    const {manifest,asset,state=null}=binding,key=JSON.stringify([manifest,asset,state,regionOnly]);
     if(!packs.has(manifest))packs.set(manifest,Promise.resolve().then(()=>openPack(manifest)));
-    if(!rasters.has(key))rasters.set(key,(async()=>{const pack=await packs.get(manifest),r=pack.createRaster({asset,regionOnly:true});await r.update(0);return r;})());
+    if(!rasters.has(key))rasters.set(key,(async()=>{const pack=await packs.get(manifest),r=pack.createRaster({asset,state,regionOnly,requireState:state!==null&&!regionOnly});await r.update(0);return r;})());
     return rasters.get(key);
   }
-  const [top,side,entries]=await Promise.all([load(s.detail.top),load(s.detail.side),Promise.all(Object.entries(s.vegetation.assets).map(async([key,asset])=>[key,await load(asset)]))]);
-  return {profile:s,top,side,vegetation:new Map(entries)};
+  const [top,side,entries]=await Promise.all([load(s.detail.top,true),load(s.detail.side,true),Promise.all(Object.entries(s.vegetation.assets).map(async([key,asset])=>[key,await load(asset)]))]);
+  const windRasters=new Map();
+  await Promise.all(Object.entries(s.vegetation.wind??{}).map(async([key,w])=>{
+    const entries=await Promise.all(w.states.map(async ({state})=>[state,await load({...s.vegetation.assets[key],state})]));
+    windRasters.set(key,new Map(entries));
+  }));
+  return {profile:s,top,side,vegetation:new Map(entries),windRasters};
 }
+export function vegetationRaster(style,variant,wind){
+  const binding=style.profile.vegetation.assets[variant],response=style.profile.vegetation.wind?.[variant];
+  const state=windState(response,wind,binding?.state??null);
+  return style.windRasters.get(variant)?.get(state)??style.vegetation.get(variant);
+}
+
 export function validateStyleVariants(profile,catalog){
   for(const v of catalog.vegetation.variants)assert(own(profile.vegetation.assets,v.id),"Missing vegetation binding: "+v.id);
   return profile;

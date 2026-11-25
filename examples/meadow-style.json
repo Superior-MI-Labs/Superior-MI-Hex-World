@@ -18,7 +18,11 @@
   },
   "vegetation": {
     "assets": {
-      "meadow-01": "smi.hex.grass.01",
+      "meadow-01": {
+        "asset": "smi.hex.grass.states.fixture",
+        "manifest": "./meadow-art/manifest.json",
+        "state": "calm"
+      },
       "meadow-02": "smi.hex.grass.02",
       "meadow-03": "smi.hex.grass.03"
     },
@@ -26,6 +30,26 @@
     "min_height_ft": 0.45,
     "max_height_ft": 1.7,
     "near_px_per_ft": 18,
-    "far_px_per_ft": 8
+    "far_px_per_ft": 8,
+    "wind": {
+      "meadow-01": {
+        "bend": 0.42,
+        "reference_speed_ft_s": 20,
+        "states": [
+          {
+            "min_speed_ft_s": 8,
+            "state": "wind"
+          }
+        ]
+      },
+      "meadow-02": {
+        "bend": 0.32,
+        "reference_speed_ft_s": 20
+      },
+      "meadow-03": {
+        "bend": 0.52,
+        "reference_speed_ft_s": 20
+      }
+    }
   }
 }

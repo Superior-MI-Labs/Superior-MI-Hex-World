@@ -49,15 +49,18 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry()) {
     const t=pack.textures[key],target=new URL(t.path,url);assert(target.origin===url.origin&&target.href.startsWith(new URL(".",url).href),"Texture escapes pack directory");
     const p=new Promise((resolve,reject)=>{const i=new Image();i.crossOrigin="anonymous";i.onload=()=>{try{assert(i.naturalWidth===t.width_px&&i.naturalHeight===t.height_px,"Texture dimensions mismatch");resolve(i);}catch(e){reject(e);}};i.onerror=()=>reject(Error("Texture unavailable: "+key));i.src=target.href;});images.set(key,p);return p;
   }
-  return {createRaster({asset,state=null,regionOnly=false}){
+  return {createRaster({asset,state=null,regionOnly=false,requireState=false}){
   const map=validateSpritePack(pack,asset);
-  if(regionOnly)assert(map.get(asset).kind==="region","Static texture must reference an Atlas region");
+  const root=map.get(asset);
+  if(regionOnly)assert(root.kind==="region","Static texture must reference an Atlas region");
+  if(requireState)assert(root.kind==="state_set"&&state!==null,"Wind state needs an Atlas state set");
+  if(state!==null&&root.kind==="state_set")assert(Object.hasOwn(root.states,state),"Unknown Atlas state: "+state);
   const renderer=globalThis.VisualAtlasRenderer.create({getAsset:id=>map.get(id),getImage,slots:globalThis.VisualAtlasSlots,timeline:globalThis.VisualAtlasTimeline,visualCore:globalThis.VisualAtlasVisualCore});
   const [w,h]=renderer.sizeFor(asset),canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
   let revision=0,busy=false,last=-Infinity,pivot=[.5,1];
-  return {image:canvas,pixelWidth:w,pixelHeight:h,get pivot(){return pivot;},get revision(){return revision;},
+  return {image:canvas,pixelWidth:w,pixelHeight:h,animated:root.kind!=="region",get pivot(){return pivot;},get revision(){return revision;},
     async update(time){
-      if(busy||time-last<80)return false;busy=true;
+      if(busy||(root.kind==="region"&&revision>0)||time-last<80)return false;busy=true;
       try{ctx.clearRect(0,0,w,h);await renderer.drawAsset(asset,ctx,0,0,w,h,time,{},state);pivot=renderer.pivotFor(asset,time,state)??[.5,1];const out=canvas.getContext("2d");out.clearRect(0,0,w,h);out.drawImage(back,0,0);revision++;last=time;return true;}finally{busy=false;}
     }};
   }};

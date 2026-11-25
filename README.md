@@ -31,3 +31,6 @@ v0.14: externally hosted multi-pack art profiles and optional RGB detail modulat
 
 
 v0.15: committed spatial enter/leave/use signals, persistent interaction tags, and visual foliage contact bending. See [interaction handoff](docs/INTERACTIONS.md).
+
+
+v0.16: persistent spatial wind, local shelter zones, authored Atlas animation states and combined wind/contact deformation. [Environment art handoff](docs/ENVIRONMENT_ART.md).

@@ -1,8 +1,8 @@
 {
   "schema": "smi-visual-pack/1",
   "pack_id": "smi.hex.meadow.fixture",
-  "version": "1.0.0",
-  "description": "Original procedural art contract test fixture",
+  "version": "1.1.0",
+  "description": "Original procedural art contract test fixture; alternate grass silhouettes exercise wind-state sequence resolution, not production animation.",
   "license": "CC0-1.0",
   "textures": {
     "sheet": {
@@ -79,6 +79,32 @@
         0.5,
         1
       ]
+    },
+    {
+      "id": "smi.hex.grass.wind.fixture",
+      "kind": "sequence",
+      "default_fps": 3,
+      "playback": "pingpong",
+      "frames": [
+        {
+          "asset": "smi.hex.grass.01"
+        },
+        {
+          "asset": "smi.hex.grass.02"
+        },
+        {
+          "asset": "smi.hex.grass.03"
+        }
+      ]
+    },
+    {
+      "id": "smi.hex.grass.states.fixture",
+      "kind": "state_set",
+      "default_state": "calm",
+      "states": {
+        "calm": "smi.hex.grass.01",
+        "wind": "smi.hex.grass.wind.fixture"
+      }
     }
   ]
 }
