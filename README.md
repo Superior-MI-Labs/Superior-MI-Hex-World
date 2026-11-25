@@ -34,3 +34,6 @@ v0.15: committed spatial enter/leave/use signals, persistent interaction tags, a
 
 
 v0.16: persistent spatial wind, local shelter zones, authored Atlas animation states and combined wind/contact deformation. [Environment art handoff](docs/ENVIRONMENT_ART.md).
+
+
+v0.17: per-material Atlas texture blending, full-color albedo, persistent climate fields and seasonal foliage bindings.

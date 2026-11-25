@@ -1,7 +1,7 @@
 // Presentation profile: binds existing Atlas IDs to Hex World visual roles.
 import {openAtlasPack} from "./assets.mjs";
 import {stableUnit} from "./materials.mjs";
-import {validateWindResponse,windState} from "./environment.mjs";
+import {validateWindResponse,windState,SEASONS} from "./environment.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const positive=n=>Number.isFinite(n)&&n>0;
 const id=s=>typeof s==="string"&&s.length>0&&s.length<=2048;
@@ -16,7 +16,9 @@ export function artBinding(value,defaultManifest){
 export function resolveStyleProfile(profile,baseURL){
   const s=validateStyle(profile),resolve=b=>{const x=artBinding(b,s.manifest);return {...x,manifest:new URL(x.manifest,baseURL).href};};
   s.detail.top=resolve(s.detail.top);s.detail.side=resolve(s.detail.side);
+  for(const d of Object.values(s.detail.materials??{}))for(const role of ["top","side"])if(d[role]!==undefined)d[role]=resolve(d[role]);
   s.vegetation.assets=Object.fromEntries(Object.entries(s.vegetation.assets).map(([k,v])=>[k,resolve(v)]));
+  for(const entries of Object.values(s.vegetation.seasonal??{}))for(const [k,v] of Object.entries(entries))entries[k]=resolve(v);
   return s;
 }
 export function validateStyle(s){
@@ -24,13 +26,24 @@ export function validateStyle(s){
   const d=s.detail,l=s.lighting,v=s.vegetation;
   assert(d&&positive(d.repeat_ft)&&Number.isFinite(d.strength)&&d.strength>=0&&d.strength<=1,"Invalid detail binding");
   artBinding(d.top,s.manifest);artBinding(d.side,s.manifest);
-  assert(d.color_mode===undefined||["grayscale","rgb_detail"].includes(d.color_mode),"Invalid detail color mode");
+  const mode=m=>m===undefined||["grayscale","rgb_detail","albedo"].includes(m);
+  assert(mode(d.color_mode),"Invalid detail color mode");
+  assert(d.materials===undefined||(d.materials&&typeof d.materials==="object"&&!Array.isArray(d.materials)&&Object.keys(d.materials).length<=64),"Invalid material textures");
+  for(const [k,m] of Object.entries(d.materials??{})){
+    assert(id(k)&&m&&typeof m==="object"&&!Array.isArray(m)&&mode(m.color_mode)&&(m.top!==undefined||m.side!==undefined),"Invalid material texture");
+    for(const role of ["top","side"])if(m[role]!==undefined){const b=artBinding(m[role],s.manifest);assert(b.state===undefined,"Terrain textures must be static");}
+  }
   assert(l&&Number.isFinite(l.ambient)&&l.ambient>=0&&l.ambient<=1&&Array.isArray(l.direction)&&l.direction.length===3&&l.direction.every(Number.isFinite)&&Math.hypot(...l.direction)>0,"Invalid lighting");
   assert(v&&v.assets&&typeof v.assets==="object"&&!Array.isArray(v.assets)&&Object.keys(v.assets).length>0&&Object.keys(v.assets).length<=512&&Number.isInteger(v.samples_per_triangle)&&v.samples_per_triangle>=1&&v.samples_per_triangle<=8&&positive(v.min_height_ft)&&positive(v.max_height_ft)&&v.max_height_ft>=v.min_height_ft&&positive(v.far_px_per_ft)&&v.near_px_per_ft>v.far_px_per_ft,"Invalid vegetation profile");
   for(const b of Object.values(v.assets))artBinding(b,s.manifest);
   assert(v.wind===undefined||(v.wind&&typeof v.wind==="object"&&!Array.isArray(v.wind)),"Invalid vegetation wind map");
   const out=structuredClone(s);
   if(v.wind!==undefined){for(const [k,w] of Object.entries(v.wind)){assert(own(v.assets,k),"Unknown wind variant: "+k);out.vegetation.wind[k]=validateWindResponse(w);}}
+  assert(v.seasonal===undefined||(v.seasonal&&typeof v.seasonal==="object"&&!Array.isArray(v.seasonal)),"Invalid seasonal bindings");
+  for(const [season,entries] of Object.entries(v.seasonal??{})){
+    assert(SEASONS.includes(season)&&entries&&typeof entries==="object"&&!Array.isArray(entries),"Invalid season");
+    for(const [k,b] of Object.entries(entries)){assert(own(v.assets,k),"Unknown seasonal variant");artBinding(b,s.manifest);}
+  }
   return out;
 }
 export async function loadStyle(profile,{baseURL=location.href,openPack=openAtlasPack}={}){
@@ -47,9 +60,18 @@ export async function loadStyle(profile,{baseURL=location.href,openPack=openAtla
     const entries=await Promise.all(w.states.map(async ({state})=>[state,await load({...s.vegetation.assets[key],state})]));
     windRasters.set(key,new Map(entries));
   }));
-  return {profile:s,top,side,vegetation:new Map(entries),windRasters};
+  const materialRasters=new Map(),seasonalRasters=new Map();
+  await Promise.all(Object.entries(s.detail.materials??{}).map(async([material,d])=>{
+    const rasters={};await Promise.all(["top","side"].filter(role=>d[role]!==undefined).map(async role=>{rasters[role]=await load(d[role],true);}));
+    materialRasters.set(material,rasters);
+  }));
+  await Promise.all(Object.entries(s.vegetation.seasonal??{}).map(async([season,bindings])=>{
+    seasonalRasters.set(season,new Map(await Promise.all(Object.entries(bindings).map(async([k,b])=>[k,await load(b)]))));
+  }));
+  return {profile:s,top,side,vegetation:new Map(entries),windRasters,materialRasters,seasonalRasters};
 }
-export function vegetationRaster(style,variant,wind){
+export function vegetationRaster(style,variant,wind,season="summer"){
+  const seasonal=style.seasonalRasters?.get(season)?.get(variant);if(seasonal)return seasonal;
   const binding=style.profile.vegetation.assets[variant],response=style.profile.vegetation.wind?.[variant];
   const state=windState(response,wind,binding?.state??null);
   return style.windRasters.get(variant)?.get(state)??style.vegetation.get(variant);
@@ -57,6 +79,7 @@ export function vegetationRaster(style,variant,wind){
 
 export function validateStyleVariants(profile,catalog){
   for(const v of catalog.vegetation.variants)assert(own(profile.vegetation.assets,v.id),"Missing vegetation binding: "+v.id);
+  if(catalog.materials)for(const k of Object.keys(profile.detail.materials??{}))assert(own(catalog.materials,k),"Unknown material binding: "+k);
   return profile;
 }
 export async function fetchStyle(reference,catalog,{fetcher=fetch,baseURL=location.href,openPack=openAtlasPack}={}){
@@ -82,4 +105,19 @@ export function vegetationSamples(face,seed,profile,scale){
     out.push({point,height,variant:face.variant});
   }
   return out;
+}
+
+// A top triangle has at most four source cells (center and two corner
+// neighborhoods). Collapse unused material bindings into the default layer.
+export function terrainTexturePlan(face,style){
+  const role=face.kind==="top"?"top":"side",d=style?.detail;
+  const bindingFor=material=>material!=null&&own(d?.materials,material)&&d.materials[material][role]!==undefined?material:null;
+  const weights=Array.from({length:3},(_,i)=>{
+    const source=face.attributes?.[i]?.materialWeights??[[face.material??null,1]],map=new Map();
+    for(const [m,w] of source){const key=bindingFor(m);map.set(key,(map.get(key)??0)+w);}return map;
+  });
+  const keys=[...new Set(weights.flatMap(w=>[...w.keys()]))].sort((a,b)=>a===b?0:a===null?-1:b===null?1:a<b?-1:1);
+  assert(keys.length<=4,"Terrain triangle exceeds four material layers");
+  const modes=keys.map(k=>k===null?d?.color_mode??"grayscale":d.materials[k].color_mode??d.color_mode??"grayscale");
+  return {role,keys,modes,weights:weights.map(w=>Array.from({length:4},(_,i)=>w.get(keys[i])??0))};
 }

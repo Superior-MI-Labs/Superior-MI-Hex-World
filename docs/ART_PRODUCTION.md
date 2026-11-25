@@ -32,3 +32,5 @@ Copy the example style, map the required three vegetation IDs and top/side textu
 For responsive brush, foliage, switches, doors and effects, read [interaction asset handoff](INTERACTIONS.md). Do not bake physical or game behavior into art.
 
 For wind-responsive static or animated sheets, follow [environment artwork bindings](ENVIRONMENT_ART.md). Use canonical Atlas regions, sequences and state sets; capabilities are mapped in Hex World.
+
+Per-material full-color albedo is now supported through style bindings; seasonal vegetation variants can also be supplied using the [environment artwork contract](ENVIRONMENT_ART.md). Ground texture artwork remains unprojected and seamless.

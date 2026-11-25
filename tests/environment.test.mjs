@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {World,Clock} from "../src/core.mjs";
-import {CALM,validateEnvironment,windAt,sampleWind,validateWindResponse,windState,windOffset,composeBend} from "../src/environment.mjs";
+import {CALM,validateEnvironment,windAt,climateAt,DEFAULT_CLIMATE,sampleWind,validateWindResponse,windState,windOffset,composeBend} from "../src/environment.mjs";
 import {billboard} from "../src/camera.mjs";
 import {bendBillboard} from "../src/interactions.mjs";
 import {spriteBinding} from "../src/entities.mjs";
@@ -12,3 +12,5 @@ assert.deepEqual(windAt(e,[-16,0,0]).velocity_ft_s,[0,10]);assert.deepEqual(wind
 test("invalid environment update is atomic and backward-compatible",()=>{const w=new World(cfg),before=w.snapshot();assert.throws(()=>w.setEnvironment({wind:{velocity_ft_s:[Infinity,0]}}));assert.throws(()=>validateEnvironment({zones:[zone("a",[0,0],[1,0],CALM)]}));assert.deepEqual(w.snapshot(),before);assert.deepEqual(World.restore(before).environment.wind,CALM);});
 test("gusts deterministic and visual time independent of simulation",()=>{const c=new Clock(),p=[-10,3,5],a=sampleWind(windy,p,0);c.animate(2);assert.equal(c.simulation,0);assert.notDeepEqual(sampleWind(windy,p,c.visual),a);assert.deepEqual(sampleWind(windy,p,0),a);assert.deepEqual(sampleWind(CALM,p,1),[0,0]);});
 test("asset capability opt-in, threshold state, direction and root-preserving composition",()=>{const r=validateWindResponse({bend:.5,reference_speed_ft_s:20,states:[{min_speed_ft_s:8,state:"wind"}]});assert.equal(windState(r,CALM,"idle"),"idle");assert.equal(windState(r,windy,"idle"),"wind");assert.deepEqual(windOffset(null,[20,0],2),[0,0]);assert.deepEqual(windOffset(r,[20,0],2),[1,0]);const root=[0,0,5],q=billboard(root,0,1,2),contact=bendBillboard(q,root,2,[{id:"a",point:[-1,0,5]}],{radius_ft:3,vertical_ft:2,strength:.8});const bent=composeBend(q,contact,[1,0],2);assert.deepEqual(bent.slice(2),q.slice(2));assert.ok(bent[0][0]>contact[0][0]);assert.ok(bent[0][0]-q[0][0]<=2+1e-8);assert.equal(composeBend(q,q,[0,0],2),q);assert.throws(()=>validateWindResponse({states:[{min_speed_ft_s:10,state:"x"},{min_speed_ft_s:5,state:"y"}]}));assert.deepEqual(spriteBinding({manifest:"./p.json",asset:"a",wind:r}).wind,r);});
+
+test("climate and wind override independently, survive saves and do not mutate surfaces",()=>{const w=new World(cfg),winter={season:"winter",temperature_c:-10,precipitation:"snow",intensity:.8};w.setEnvironment({wind:windy,zones:[{id:"winter",center:[-16,0],radius:1,levels:[0,0],climate:winter},zone("shelter",[-16,0],[0,0],CALM)]});const e=w.environment;assert.deepEqual(climateAt(e,[-16,0,0]),winter);assert.deepEqual(climateAt(e,[-16,0,1]),DEFAULT_CLIMATE);assert.deepEqual(windAt(e,[-16,0,0]),CALM);assert.deepEqual(World.restore(w.snapshot()).environment,e);assert.throws(()=>w.setEnvironment({climate:{...winter,intensity:2}}));assert.deepEqual(w.environment,e);});

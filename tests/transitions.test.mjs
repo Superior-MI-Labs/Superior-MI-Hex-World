@@ -48,3 +48,5 @@ test("cache reacts to newly known neighbor and validates catalog parameters",()=
   const w=new World(cfg),a=[0,0,0];w.defineChunk(0,0,0);w.set(...a,cell());const cache=new TerrainFaceCache(w),first=cache.get(a);w.defineChunk(-1,0,0);assert.notEqual(cache.get(a),first);
   assert.throws(()=>transitionSettings({edge_strength:2}));assert.throws(()=>transitionSettings({mask:{asset:"a"}}));
 });
+
+test("mixed material weights are identical on both sides of shared edges",()=>{const w=world(),a=[0,0,0],b=[0,1,0],c=[1,0,0];w.set(...a,cell());w.set(...b,cell(0,uniformShape(2),"stone"));w.set(...c,cell(0,uniformShape(2),"sand"));const x=top(decorateTerrain(w,[a],catalog),0),y=top(decorateTerrain(w,[b],catalog),3);assert.deepEqual(x.attributes[1].materialWeights,y.attributes[2].materialWeights);assert.equal(x.attributes[1].materialWeights.length,3);assert.ok(Math.abs(x.attributes[1].materialWeights.reduce((s,[,v])=>s+v,0)-1)<1e-9);assert.deepEqual(x.attributes[0].materialWeights,[["soil",1]]);});

@@ -9,23 +9,31 @@ export function validateWind(w){
   assert(record(w)&&Array.isArray(w.velocity_ft_s)&&w.velocity_ft_s.length===2&&w.velocity_ft_s.every(v=>finite(v,-150,150))&&Math.hypot(...w.velocity_ft_s)<=150&&finite(w.gust??0,0,1),"Invalid wind");
   return {velocity_ft_s:[...w.velocity_ft_s],gust:w.gust??0};
 }
+export const SEASONS=Object.freeze(["spring","summer","autumn","winter"]);
+export const DEFAULT_CLIMATE=Object.freeze({season:"summer",temperature_c:20,precipitation:"none",intensity:0});
+export function validateClimate(value=DEFAULT_CLIMATE){
+  assert(record(value)&&SEASONS.includes(value.season)&&finite(value.temperature_c,-100,100)&&["none","rain","snow","hail"].includes(value.precipitation)&&finite(value.intensity,0,1)&&(value.precipitation!=="none"||value.intensity===0),"Invalid climate");
+  return {season:value.season,temperature_c:value.temperature_c,precipitation:value.precipitation,intensity:value.intensity};
+}
 export function validateEnvironment(e={wind:CALM,zones:[]}){
   assert(record(e)&&Array.isArray(e.zones??[])&&(e.zones??[]).length<=128,"Invalid environment");
   const ids=new Set(),zones=(e.zones??[]).map(z=>{
     assert(record(z)&&token(z.id)&&!ids.has(z.id)&&ints(z.center,2)&&Number.isInteger(z.radius)&&z.radius>=0&&z.radius<=128&&ints(z.levels,2)&&z.levels[0]<=z.levels[1],"Invalid wind zone");
-    ids.add(z.id);return {id:z.id,center:[...z.center],radius:z.radius,levels:[...z.levels],wind:validateWind(z.wind)};
+    assert(z.wind!==undefined||z.climate!==undefined,"Empty environmental zone");
+    ids.add(z.id);return {id:z.id,center:[...z.center],radius:z.radius,levels:[...z.levels],...(z.wind!==undefined?{wind:validateWind(z.wind)}:{}),...(z.climate!==undefined?{climate:validateClimate(z.climate)}:{})};
   });
-  return {wind:validateWind(e.wind??CALM),zones};
+  return {wind:validateWind(e.wind??CALM),climate:validateClimate(e.climate),zones};
 }
-export function windAt(field,address){
-  let w=field.wind;
-  // Later matching zones override earlier zones. Support-cell Z is explicit.
+function fieldAt(field,address,key,fallback){
+  let value=field[key]??fallback;
   for(const zone of field.zones){
     const dq=address[0]-zone.center[0],dr=address[1]-zone.center[1];
-    if(address[2]>=zone.levels[0]&&address[2]<=zone.levels[1]&&Math.max(Math.abs(dq),Math.abs(dr),Math.abs(dq+dr))<=zone.radius)w=zone.wind;
+    if(zone[key]!==undefined&&address[2]>=zone.levels[0]&&address[2]<=zone.levels[1]&&Math.max(Math.abs(dq),Math.abs(dr),Math.abs(dq+dr))<=zone.radius)value=zone[key];
   }
-  return w;
+  return value;
 }
+export const windAt=(field,address)=>fieldAt(field,address,"wind",CALM);
+export const climateAt=(field,address)=>fieldAt(field,address,"climate",DEFAULT_CLIMATE);
 export function sampleWind(w,point,seconds){
   const phase=point[0]*.17+point[1]*.13+seconds*1.8;
   const factor=1+w.gust*(.7*Math.sin(phase)+.3*Math.sin(phase*.61+1.4));

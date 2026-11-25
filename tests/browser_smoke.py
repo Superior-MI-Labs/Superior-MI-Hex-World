@@ -47,6 +47,22 @@ with sync_playwright() as p:
     }""")
     assert 110<shadow["dark"][0]<150 and shadow["clear"][0]>240,shadow
     assert shadow["hidden"][1]>240 and shadow["hidden"][0]<10,shadow
+    materials=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs');
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      function img(color){const a=document.createElement('canvas');a.width=a.height=2;const x=a.getContext('2d');x.fillStyle=color;x.fillRect(0,0,2,2);return a;}
+      r.setTerrainDetail('top',img('#ff0000'));
+      r.setTerrainDetail('top',img('#0000ff'),'stone');
+      const style={detail:{repeat_ft:5,strength:1,color_mode:'albedo',materials:{stone:{top:'stone'}}}};
+      const attr=materialWeights=>({color:[0,1,0],cover:[0,0,0],rim:-1,materialWeights});
+      const face={kind:'top',material:'soil',points:[[0,0,1],[64,0,1],[0,64,1]],attributes:[attr([['soil',1]]),attr([['stone',1]]),attr([['soil',1]])]};
+      r.render([face],view,{style});
+      return [r.readPixel(3,3),r.readPixel(31,3),r.readPixel(59,2)];
+    }""")
+    assert materials[0][0]>230 and materials[0][2]<25,materials
+    assert 105<materials[1][0]<150 and 105<materials[1][2]<150,materials
+    assert materials[2][2]>225 and materials[2][0]<30,materials
     # Verify the coverage gradient and exact zero/full endpoints in actual GPU pixels.
     coverage=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -79,6 +95,16 @@ with sync_playwright() as p:
     page.locator("#clearWind").click()
     page.locator("#windSpeed").fill("0")
     page.locator("#applyWind").click()
+    page.locator("#season").select_option("autumn")
+    page.locator("#applyClimate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).seasonal_sprites>0")
+    page.locator("#season").select_option("winter")
+    page.locator("#localClimate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_climate.season==='winter'")
+    page.locator("#clearClimate").click()
+    page.locator("#season").select_option("summer")
+    page.locator("#applyClimate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).seasonal_sprites===0")
     page.locator("#artURL").fill("./examples/no-such-style.json")
     page.locator("#loadArt").click()
     page.wait_for_function("document.querySelector('#artStatus').textContent.startsWith('Previous style retained:')")

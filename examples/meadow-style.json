@@ -6,7 +6,18 @@
     "top": "smi.hex.detail.meadow",
     "side": "smi.hex.detail.earth",
     "repeat_ft": 5,
-    "strength": 0.6
+    "strength": 0.6,
+    "materials": {
+      "stone": {
+        "top": "smi.hex.detail.earth",
+        "side": "smi.hex.detail.earth",
+        "color_mode": "rgb_detail"
+      },
+      "sand": {
+        "top": "smi.hex.detail.earth",
+        "color_mode": "grayscale"
+      }
+    }
   },
   "lighting": {
     "ambient": 0.57,
@@ -49,6 +60,16 @@
       "meadow-03": {
         "bend": 0.52,
         "reference_speed_ft_s": 20
+      }
+    },
+    "seasonal": {
+      "autumn": {
+        "meadow-01": "smi.hex.grass.03",
+        "meadow-02": "smi.hex.grass.03",
+        "meadow-03": "smi.hex.grass.02"
+      },
+      "winter": {
+        "meadow-01": "smi.hex.grass.02"
       }
     }
   }

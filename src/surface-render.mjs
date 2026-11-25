@@ -5,7 +5,13 @@ import {appearance,transitionSettings} from "./materials.mjs";
 import {TerrainFaceCache} from "./terrain.mjs";
 const mix=(a,b,t)=>a+(b-a)*t;
 const vector=(a,b,t)=>a.map((v,i)=>mix(v,b[i],t));
-const combine=(a,b,t)=>t===0?a:t===1?b:({color:vector(a.color,b.color,t),cover:vector(a.cover,b.cover,t),vegetation:mix(a.vegetation,b.vegetation,t)});
+function blendWeights(a,b,t){
+  const weights=new Map();
+  for(const [k,v] of a)weights.set(k,v*(1-t));
+  for(const [k,v] of b)weights.set(k,(weights.get(k)??0)+v*t);
+  return [...weights].filter(([,v])=>v>0).sort(([a],[b])=>a<b?-1:a>b?1:0);
+}
+const combine=(a,b,t)=>t===0?a:t===1?b:({color:vector(a.color,b.color,t),cover:vector(a.cover,b.cover,t),vegetation:mix(a.vegetation,b.vegetation,t),weights:blendWeights(a.weights,b.weights,t)});
 const avg=items=>items.reduce((acc,v,i)=>i?combine(acc,v,1/(i+1)):v,null);
 const key=a=>a.join(",");
 const clamp=v=>Math.min(1,Math.max(0,v));
@@ -14,7 +20,7 @@ export function decorateTerrain(world,addresses,catalog,{enabled=true,cache=new 
   function record(address){
     const k=key(address);if(records.has(k))return records.get(k);
     const cell=world.get(...address),faces=cache.get(address);
-    const r=cell?{address,cell,faces,top:new Set(faces.filter(f=>f.kind==="top").map(f=>f.triangle)),app:appearance(catalog,seed,address,cell,"top")}:null;
+    const r=cell?{address,cell,faces,top:new Set(faces.filter(f=>f.kind==="top").map(f=>f.triangle)),app:{...appearance(catalog,seed,address,cell,"top"),weights:[[cell.material,1]]}}:null;
     records.set(k,r);return r;
   }
   function connected(a,b){
@@ -42,7 +48,7 @@ export function decorateTerrain(world,addresses,catalog,{enabled=true,cache=new 
       let attributes,vegetation=app.vegetation;
       if(face.kind==="top"){
         const points=[6,face.triangle,(face.triangle+1)%6].map(i=>corner(r,i));
-        attributes=points.map(p=>({color:p.color,cover:p.cover,rim:-1}));
+        attributes=points.map(p=>({color:p.color,cover:p.cover,rim:-1,materialWeights:p.weights}));
         vegetation=Object.hasOwn(catalog.materials,r.cell.material)&&catalog.materials[r.cell.material].vegetation?avg(points).vegetation:0;
       }else if(face.kind==="side"&&enabled&&style.cliff_bleed_ft>0&&r.top.has(face.edge)){
         const e=face.edge,j=(e+1)%6,a=v.upper[e],b=v.upper[j],dx=b[0]-a[0],dy=b[1]-a[1];
