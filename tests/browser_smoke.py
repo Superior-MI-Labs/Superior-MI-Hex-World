@@ -163,6 +163,7 @@ with sync_playwright() as p:
       const {project}=await import('/src/camera.mjs');
       return project([1.25,2.165063509,7.5]);
     }""")
+    page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
     page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).face==='side:0'")
@@ -172,9 +173,17 @@ with sync_playwright() as p:
     page.locator("#height").fill("1")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper[0]===1")
     page.locator("#vertex").select_option("lower:0")
+    # Control interactions may scroll the page. Re-read the canvas rectangle
+    # after selecting the lower handle, rather than reusing pre-scroll pixels.
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).vertex.layer==='lower' && JSON.parse(document.querySelector('#status').textContent).vertex.index===0")
+    page.locator("#scene").scroll_into_view_if_needed()
+    box=page.locator("#scene").bounding_box()
     # Drag the actual lower handle past its paired upper vertex.
     handle=page.evaluate("""() => JSON.parse(document.querySelector('#status').textContent).handles.find(h=>h.layer==='lower'&&h.index===0)""")
-    page.mouse.move(box["x"]+handle["x"]*box["width"]/900,box["y"]+handle["y"]*box["height"]/450)
+    hx=box["x"]+handle["x"]*box["width"]/900
+    hy=box["y"]+handle["y"]*box["height"]/450
+    assert page.evaluate("([x,y])=>document.elementFromPoint(x,y)?.id", [hx,hy])=="scene", (box,handle)
+    page.mouse.move(hx,hy)
     page.mouse.down()
     page.mouse.move(box["x"]+handle["x"]*box["width"]/900,box["y"]+(handle["y"]-150)*box["height"]/450,steps=5)
     page.mouse.up()
@@ -188,6 +197,7 @@ with sync_playwright() as p:
     page.locator("#loadActor").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     page.get_by_role("button",name="Rotate 60°").click()
+    page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
     page.mouse.move(box["x"]+box["width"]/2,box["y"]+box["height"]/2)
     page.mouse.down(button="middle")
@@ -201,6 +211,7 @@ with sync_playwright() as p:
     initial=page.evaluate("JSON.parse(document.querySelector('#status').textContent).resident_chunks")
     page.get_by_role("button",name="Half",exact=True).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===1)")
+    page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
     page.mouse.move(box["x"]+box["width"]/2,box["y"]+box["height"]/2)
     page.mouse.down(button="middle")
@@ -258,6 +269,7 @@ with sync_playwright() as p:
       const {project}=await import('/src/camera.mjs');
       return project([5,0,5]);
     }""")
+    page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
     page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='1,0,0'")
@@ -294,6 +306,7 @@ with sync_playwright() as p:
       const camera=JSON.parse(document.querySelector('#status').textContent).camera;
       return project([0,0,5],camera);
     }""")
+    page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
     page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='0,0,0'")
