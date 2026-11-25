@@ -16,6 +16,8 @@ float coverage(float amount,float noise){
 void main(){
   vec4 t=texture(u_texture,v_uv);
   if(u_mode==2){if(t.a<0.5)discard;color=vec4(t.rgb,1.0);}
+  else if(u_mode==3){if(t.a<0.98)discard;color=vec4(t.rgb,1.0);}
+  else if(u_mode==4){if(t.a<=0.02||t.a>=0.98)discard;color=t;}
   else {
     vec3 base=v_color*(u_mode==1?mix(1.0,t.r,u_detail_strength):1.0);
     float noise=noise2(v_mask_uv*u_mask_scale);
@@ -81,7 +83,7 @@ export function createRenderer(canvas){
     return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/14);}
-  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null}={}){
+  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,softSprites=false}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(uniforms.u_detail_strength,style?.detail.strength??.25);
     gl.uniform1i(uniforms.u_mask_enabled,maskEnabled?1:0);gl.uniform1i(uniforms.u_debug,debug?1:0);
@@ -110,7 +112,19 @@ export function createRenderer(canvas){
     for(const role of ["top","side"])draw(batchesTerrain[role],style?(detailTextures[role]??ground):ground,pattern?1:0);
     const batches=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
     for(const {actor,quad} of actors){used.add(actor.image);const tex=spriteTexture(actor),batch=batches.get(tex)??[];for(const i of [0,1,2,0,2,3])pack(batch,quad[i],[1,1,1],uv[i]);batches.set(tex,batch);}
-    for(const [tex,batch] of batches)draw(batch,tex,2);
+    for(const [tex,batch] of batches)draw(batch,tex,softSprites?3:2);
+    if(softSprites){
+      // Opaque sprite cores write depth. Translucent fringes retain terrain
+      // depth testing and blend back-to-front, without writing depth.
+      gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+      const ordered=[...actors].sort((a,b)=>a.quad.reduce((s,p)=>s+p.depth,0)-b.quad.reduce((s,p)=>s+p.depth,0));
+      let current=null,batch=[];
+      for(const {actor,quad} of ordered){
+        const tex=spriteTexture(actor);if(current!==tex){if(current)draw(batch,current,4);batch=[];current=tex;}
+        for(const i of [0,1,2,0,2,3])pack(batch,quad[i],[1,1,1],uv[i]);
+      }
+      if(current)draw(batch,current,4);gl.depthMask(true);gl.disable(gl.BLEND);
+    }
     for(const [image,record] of spriteTextures)if(!used.has(image)){gl.deleteTexture(record.tex);spriteTextures.delete(image);}
 
   }

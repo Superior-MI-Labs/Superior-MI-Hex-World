@@ -42,6 +42,18 @@ export function planPrefab(world,prefab,anchor,turns=0){
   }
   return {edits,conflicts};
 }
+// Capture explicit cells, not a bounding box that accidentally includes terrain.
+export function capturePrefab(world,addresses,anchor,{id,name}){
+  assert(validAddress(anchor)&&Array.isArray(addresses)&&addresses.length>0&&addresses.length<=4096,"Invalid capture selection");
+  const grid=world.config.grid,seen=new Set(),cells=[];
+  for(const address of addresses){
+    assert(validAddress(address),"Invalid capture address");
+    const k=address.join(",");if(seen.has(k))continue;seen.add(k);
+    const c=world.get(...address);assert(c,"Unknown capture cell");assert(hasVolume(c.shape),"Capture requires solid cells");
+    cells.push({offset:address.map((v,i)=>v-anchor[i]),material:c.material,shape:c.shape});
+  }
+  return validatePrefab({schema:"smi-hex-prefab/1",id,name,grid:{horizontal_ft:grid.horizontal_ft,vertical_ft:grid.vertical_ft,geometry_subdivisions:grid.geometry_subdivisions},cells});
+}
 export function placePrefab(world,prefab,anchor,turns=0){
   const p=planPrefab(world,prefab,anchor,turns);
   assert(!p.conflicts.length,"Prefab blocked: "+p.conflicts[0]?.reason);

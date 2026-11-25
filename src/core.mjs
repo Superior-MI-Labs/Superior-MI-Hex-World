@@ -1,6 +1,6 @@
 import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
-import {validateEntity} from "./entities.mjs";
+import {validateEntity,validAddress} from "./entities.mjs";
 export {shape} from "./geometry.mjs";
 // Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
 const int = Number.isSafeInteger;
@@ -44,11 +44,16 @@ function cell(value, subdivisions) {
   return result;
 }
 export class World {
-  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map();
+  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map(); #effects=new Map(); #clockState=null;
   constructor(config){this.#config=validateWorld(config);}
   get config(){return copy(this.#config);}
   get chunkCount(){return this.#chunks.size;}
   get entityCount(){return this.#entities.size;}
+  effects(){return [...this.#effects.values()].map(copy);}
+  putEffect(value){const e=validatePlacedEffect(value);requireThat(this.get(...e.address),"Unknown effect cell");requireThat(!this.#effects.has(e.id),"Duplicate effect ID");this.#effects.set(e.id,e);}
+  removeEffect(id){return this.#effects.delete(id);}
+  setClockState(state){this.#clockState=Clock.restore(state).snapshot();}
+  get clockState(){return this.#clockState?copy(this.#clockState):null;}
   entities(){return [...this.#entities.values()].map(copy);}
   getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
   putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);}
@@ -86,7 +91,7 @@ export class World {
     }
   }
   snapshot(){
-    return {schema:"smi-hex-save/1",world:this.config,entities:this.entities(),chunks:[...this.#chunks].map(([key,c])=>({address:key.split(",").map(Number),defaultCell:copy(c.defaultCell),cells:[...c.cells].map(([local,value])=>({local:local.split(",").map(Number),value:copy(value)}))}))};
+    return {schema:"smi-hex-save/1",world:this.config,entities:this.entities(),effects:this.effects(),clock:this.clockState,chunks:[...this.#chunks].map(([key,c])=>({address:key.split(",").map(Number),defaultCell:copy(c.defaultCell),cells:[...c.cells].map(([local,value])=>({local:local.split(",").map(Number),value:copy(value)}))}))};
   }
   static restore(data){
     requireThat(data?.schema==="smi-hex-save/1"&&Array.isArray(data.chunks),"Invalid world save");
@@ -106,6 +111,9 @@ export class World {
     }
     requireThat(data.entities===undefined||Array.isArray(data.entities),"Invalid saved entities");
     for(const e of data.entities??[])w.putEntity(e);
+    requireThat(data.effects===undefined||Array.isArray(data.effects),"Invalid saved effects");
+    for(const e of data.effects??[])w.putEffect(e);
+    if(data.clock!=null)w.setClockState(data.clock);
     return w;
   }
 }
@@ -114,6 +122,8 @@ export class Clock {
   constructor({mode="frozen",rate=1}={}){this.configure(mode,rate);}
   configure(mode,rate=1){requireThat(["frozen","manual","turn-based","real-time","scaled"].includes(mode)&&positive(rate),"Invalid clock");this.#mode=mode;this.#rate=rate;}
   get simulation(){return this.#simulation;} get visual(){return this.#visual;}
+  snapshot(){return {mode:this.#mode,rate:this.#rate,simulation:this.#simulation};}
+  static restore(state){requireThat(state&&Number.isFinite(state.simulation)&&state.simulation>=0,"Invalid simulation clock");const c=new Clock({mode:state.mode,rate:state.rate});c.#simulation=state.simulation;return c;}
   advance(seconds,source="manual"){requireThat(Number.isFinite(seconds)&&seconds>=0,"Invalid delta");
     const allowed=(source==="manual"&&["manual","turn-based"].includes(this.#mode))||(source==="realtime"&&["real-time","scaled"].includes(this.#mode));
     if(allowed){const next=this.#simulation+seconds*(this.#mode==="scaled"?this.#rate:1);requireThat(Number.isFinite(next),"Clock overflow");this.#simulation=next;}return this.#simulation;}
@@ -124,7 +134,13 @@ export function effect(definition,startedAt=0){
   if(definition.behavior==="timed")requireThat(positive(definition.duration),"Invalid duration");
   return {...copy(definition),startedAt};
 }
-export function effectActive(instance,simulationTime){return instance.behavior!=="timed"||simulationTime-instance.startedAt<instance.duration;}
+export function effectActive(instance,simulationTime){return simulationTime>=instance.startedAt&&(instance.behavior!=="timed"||simulationTime-instance.startedAt<instance.duration);}
+export function validatePlacedEffect(e){
+  requireThat(e&&typeof e.id==="string"&&e.id.length>0&&e.id.length<=200&&validAddress(e.address),"Invalid placed effect");
+  requireThat(e.kind==="fire"&&["persistent","decorative","timed"].includes(e.instance?.behavior),"Unsupported placed effect");
+  requireThat(Number.isFinite(e.instance.startedAt)&&e.instance.startedAt>=0,"Invalid effect start");
+  return {...copy(e),instance:effect(e.instance,e.instance.startedAt)};
+}
 export class AssetRegistry {
   #providers=new Map();
   register(id,provider){requireThat(typeof id==="string"&&id.length>0&&!this.#providers.has(id)&&typeof provider?.loadPack==="function","Invalid provider");this.#providers.set(id,provider);}

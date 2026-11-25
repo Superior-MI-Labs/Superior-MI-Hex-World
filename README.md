@@ -16,3 +16,6 @@ v0.9: opt-in exploration meadow, deterministic chunk generation, viewport-driven
 
 
 v0.10: atomic rotated prefab placement, persistent Atlas-bound world objects and surface anchors. Existing terrain saves remain compatible.
+
+
+v0.11: explicit prefab capture/export/import, persistent standalone fire and simulation clock saves, optional GPU soft sprite alpha.

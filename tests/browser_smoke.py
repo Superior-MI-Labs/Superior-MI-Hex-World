@@ -20,6 +20,21 @@ with sync_playwright() as p:
       return [[far,near],[near,far]].map(f=>{r.render(f,view,{pattern:false});return r.readPixel(15,15);});
     }""")
     assert all(c[1]>240 and c[0]<10 for c in result),result
+    alpha=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs');
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const img=document.createElement('canvas');img.width=img.height=1;
+      const ctx=img.getContext('2d');ctx.fillStyle='rgba(255,0,0,0.5)';ctx.fillRect(0,0,1,1);
+      const face={points:[[0,0,1],[64,0,1],[0,64,1]],kind:'top',color:[0,1,0]};
+      const sprite=d=>({image:img,revision:0,points:[[5,5,d],[35,5,d],[35,35,d],[5,35,d]]});
+      r.render([face],view,{pattern:false,sprites:[sprite(2)],softSprites:true});
+      const front=r.readPixel(10,10);
+      r.render([face],view,{pattern:false,sprites:[sprite(0)],softSprites:true});
+      return {front,behind:r.readPixel(10,10)};
+    }""")
+    assert 100<alpha["front"][0]<155 and 100<alpha["front"][1]<155,alpha
+    assert alpha["behind"][0]<10 and alpha["behind"][1]>240,alpha
     # Verify the coverage gradient and exact zero/full endpoints in actual GPU pixels.
     coverage=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -140,6 +155,26 @@ with sync_playwright() as p:
     page.locator("#load").set_input_files(str(save))
     page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===1")
+    # Capture explicit geometry, export, and verify persisted standalone effects.
+    page.locator("#captureCell").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).capture_cells===1")
+    with page.expect_download() as prefab_download:
+        page.locator("#exportPrefab").click()
+    prefab_data=json.loads(Path(prefab_download.value.path()).read_text())
+    assert len(prefab_data["cells"])==1
+    page.locator("#mode").select_option("manual")
+    page.locator("#fire").click()
+    page.locator("#timed").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).active_effects===2")
+    with page.expect_download() as effect_download:
+        page.locator("#save").click()
+    saved=effect_download.value.path()
+    page.locator("#load").set_input_files(str(saved))
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).active_effects===2")
+    page.locator("#step").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).active_effects===1")
+    page.locator("#extinguish").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_effects===0")
     page.screenshot(path="/tmp/hex-world-qa.png",full_page=True)
     assert not errors,errors
     print("GPU depth, Atlas sprite load, vertical construction and browser smoke passed")
