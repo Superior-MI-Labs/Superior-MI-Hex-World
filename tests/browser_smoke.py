@@ -526,6 +526,22 @@ with sync_playwright() as p:
     page.locator("#showWater").check()
     page.locator("#drainWater").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).water_triangles===0")
+    # Fill an empty cell above the island; simulation must follow the manual
+    # clock, not elapsed visual frames, and persist its opt-in setting.
+    page.locator("#level").select_option("1")
+    page.locator("#waterFill").fill(".8")
+    page.locator("#applyWater").click()
+    page.locator("#simulateWater").check()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).water_simulation")
+    page.locator("#mode").select_option("frozen")
+    page.locator("#step").click()
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).cell.components.water.fill")==.8
+    page.locator("#mode").select_option("manual")
+    page.locator("#step").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.water.fill<0.8")
+    with page.expect_download() as flow_save:
+        page.locator("#save").click()
+    assert json.loads(Path(flow_save.value.path()).read_text())["world"]["environment"]["water_simulation"] is True
     assert not errors,errors
     print("GPU depth, Atlas sprite load, scatter promotion, vertical construction and browser smoke passed")
     browser.close()

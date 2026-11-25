@@ -52,7 +52,7 @@ function validateScatterKeys(keys){
   requireThat(Array.isArray(keys)&&keys.length<=512&&keys.every(k=>typeof k==="string"&&k.length>0&&k.length<=4096)&&new Set(keys).size===keys.length,"Invalid scatter suppression keys");return [...keys].sort();
 }
 export class World {
-  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map(); #collisionRevision=0; #effects=new Map(); #clockState=null;
+  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #wet=new Set(); #wetDefaults=new Set(); #entities=new Map(); #collisionRevision=0; #effects=new Map(); #clockState=null;
   constructor(config){this.#config=validateWorld(config);}
   get config(){return copy(this.#config);}
   get environment(){return validateEnvironment(this.#config.environment);}
@@ -100,6 +100,7 @@ export class World {
     const value=cell(defaultCell,this.#config.grid.geometry_subdivisions);
     this.#chunks.set(key,{defaultCell:value,cells:new Map(),geometryRevision:++this.#revision});
     if(value.components?.surface?.burn>0)this.#burningDefaults.add(key);
+    if(value.components?.water?.fill>0)this.#wetDefaults.add(key);
   }
   get(q,r,z){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);return chunk ? copy(chunk.cells.get(local)??chunk.defaultCell):undefined;}
   geometryRevisionAt(q,r,z){const [key]=this.#location(q,r,z);return this.#chunks.get(key)?.geometryRevision??null;}
@@ -112,13 +113,16 @@ export class World {
       if(old.material!==value.material||["lower","upper"].some(k=>old.shape[k].some((h,i)=>h!==value.shape[k][i])))changed.add(chunk);
       chunk.cells.set(local,value);
       if(value.components?.surface?.burn>0)this.#burning.add(key);else this.#burning.delete(key);
+      if(value.components?.water?.fill>0)this.#wet.add(key);else this.#wet.delete(key);
     }
     for(const chunk of changed)chunk.geometryRevision=++this.#revision;
   }
-  *burningAddresses(){
-    for(const key of this.#burning)yield key.split(",").map(Number);
+  *burningAddresses(){yield* this.#componentAddresses(this.#burning,this.#burningDefaults);}
+  *waterAddresses(){yield* this.#componentAddresses(this.#wet,this.#wetDefaults);}
+  *#componentAddresses(explicit,defaults){
+    for(const key of explicit)yield key.split(",").map(Number);
     const size=this.#config.grid.chunk_size;
-    for(const key of this.#burningDefaults){
+    for(const key of defaults){
       const c=this.#chunks.get(key),origin=key.split(",").map((v,i)=>Number(v)*size[i]);
       for(let q=0;q<size[0];q++)for(let r=0;r<size[1];r++)for(let z=0;z<size[2];z++){
         if(c.cells.has(addressKey(q,r,z)))continue;

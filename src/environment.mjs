@@ -34,12 +34,13 @@ export function validateWater(w){
 }
 export function validateEnvironment(e={wind:CALM,zones:[]}){
   assert(record(e)&&Array.isArray(e.zones??[])&&(e.zones??[]).length<=128,"Invalid environment");
+  assert(e.water_simulation===undefined||typeof e.water_simulation==="boolean","Invalid water simulation setting");
   const ids=new Set(),zones=(e.zones??[]).map(z=>{
     assert(record(z)&&token(z.id)&&!ids.has(z.id)&&ints(z.center,2)&&Number.isInteger(z.radius)&&z.radius>=0&&z.radius<=128&&ints(z.levels,2)&&z.levels[0]<=z.levels[1],"Invalid wind zone");
     assert(z.wind!==undefined||z.climate!==undefined,"Empty environmental zone");
     ids.add(z.id);return {id:z.id,center:[...z.center],radius:z.radius,levels:[...z.levels],...(z.wind!==undefined?{wind:validateWind(z.wind)}:{}),...(z.climate!==undefined?{climate:validateClimate(z.climate)}:{})};
   });
-  return {wind:validateWind(e.wind??CALM),climate:validateClimate(e.climate),zones,...(e.lighting!==undefined?{lighting:validateLighting(e.lighting)}:{})};
+  return {wind:validateWind(e.wind??CALM),climate:validateClimate(e.climate),zones,...(e.water_simulation!==undefined?{water_simulation:e.water_simulation}:{}),...(e.lighting!==undefined?{lighting:validateLighting(e.lighting)}:{})};
 }
 function fieldAt(field,address,key,fallback){
   let value=field[key]??fallback;

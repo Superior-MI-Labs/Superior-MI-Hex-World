@@ -70,3 +70,6 @@ v0.27: persistent attached colored lights, derived fire illumination, world-spac
 
 
 v0.28: persisted authored water fill and flow, terrain-clipped water surfaces and depth-tested animated water rendering.
+
+
+v0.29: opt-in conservative floor-connected water transfer, gravity, shared-edge sills and simulation-clock ticks.
