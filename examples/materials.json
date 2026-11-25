@@ -73,5 +73,30 @@
       }
     ],
     "burn_seconds": 8
+  },
+  "transitions": {
+    "edge_strength": 1,
+    "mask_scale": 8,
+    "mask_softness": 0.13,
+    "cliff_bleed_ft": 1.25,
+    "leaf_color": [
+      0.65,
+      0.34,
+      0.12
+    ],
+    "snow_color": [
+      0.91,
+      0.94,
+      0.97
+    ],
+    "scorch_color": [
+      0.15,
+      0.13,
+      0.11
+    ],
+    "mask": {
+      "manifest": "./examples/transition-mask/manifest.json",
+      "asset": "smi.hex.transition.mask"
+    }
   }
 }

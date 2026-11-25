@@ -43,19 +43,26 @@ function cell(value, subdivisions) {
   return result;
 }
 export class World {
-  #config; #chunks=new Map();
+  #config; #chunks=new Map(); #revision=0;
   constructor(config){this.#config=validateWorld(config);}
   get config(){return copy(this.#config);}
   #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
   defineChunk(cq,cr,cz,defaultCell={material:"air",shape:uniformShape(0)}){
     const key=addressKey(cq,cr,cz);requireThat(!this.#chunks.has(key),"Chunk already defined");
-    this.#chunks.set(key,{defaultCell:cell(defaultCell,this.#config.grid.geometry_subdivisions),cells:new Map()});
+    this.#chunks.set(key,{defaultCell:cell(defaultCell,this.#config.grid.geometry_subdivisions),cells:new Map(),geometryRevision:++this.#revision});
   }
   get(q,r,z){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);return chunk ? copy(chunk.cells.get(local)??chunk.defaultCell):undefined;}
+  geometryRevisionAt(q,r,z){const [key]=this.#location(q,r,z);return this.#chunks.get(key)?.geometryRevision??null;}
   set(q,r,z,value){this.apply([{address:[q,r,z],value}]);}
   apply(edits){
     const pending=edits.map(({address,value})=>{requireThat(Array.isArray(address)&&address.length===3&&address.every(int),"Invalid edit address");const [key,local]=this.#location(...address),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");return {chunk,local,value:cell(value,this.#config.grid.geometry_subdivisions)};});
-    for(const {chunk,local,value} of pending)chunk.cells.set(local,value);
+    const changed=new Set();
+    for(const {chunk,local,value} of pending){
+      const old=chunk.cells.get(local)??chunk.defaultCell;
+      if(old.material!==value.material||["lower","upper"].some(k=>old.shape[k].some((h,i)=>h!==value.shape[k][i])))changed.add(chunk);
+      chunk.cells.set(local,value);
+    }
+    for(const chunk of changed)chunk.geometryRevision=++this.#revision;
   }
   snapshot(){
     return {schema:"smi-hex-save/1",world:this.config,chunks:[...this.#chunks].map(([key,c])=>({address:key.split(",").map(Number),defaultCell:copy(c.defaultCell),cells:[...c.cells].map(([local,value])=>({local:local.split(",").map(Number),value:copy(value)}))}))};

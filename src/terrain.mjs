@@ -1,4 +1,4 @@
-import {physicalPosition} from "./core.mjs";
+import {physicalPosition,neighbors,addressKey} from "./core.mjs";
 import {cornerRefs,EDGE_NEIGHBORS,oppositeEdge,edgeProfile,exposedEdge,mesh,vertices,hasVolume} from "./geometry.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 // Connected editing is an explicit atomic operation, not permanent welding.
@@ -65,4 +65,17 @@ export function cellFaces(world,address,grid=world.config.grid){
   }
   const origin=physicalPosition(q,r,z,grid);
   return result.map(f=>({...f,address:[...address],material:cell.material,points:f.points.map(([x,y,z])=>[x+origin.x,y+origin.y,z+origin.z])}));
+}
+
+// Derived mesh cache. Geometry/material edits invalidate touched chunks and
+// their affected neighbors; surface-only changes never invalidate topology.
+export class TerrainFaceCache{
+  #world;#grid;#entries=new Map();
+  constructor(world){this.#world=world;this.#grid=world.config.grid;}
+  get(address){
+    const key=addressKey(...address),signature=[address,...neighbors(...address)].map(a=>this.#world.geometryRevisionAt(...a)).join("|");
+    const old=this.#entries.get(key);if(old?.signature===signature)return old.faces;
+    const faces=cellFaces(this.#world,address,this.#grid);this.#entries.set(key,{signature,faces});return faces;
+  }
+  clear(){this.#entries.clear();}
 }

@@ -4,6 +4,15 @@ const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const unit=v=>Number.isFinite(v)&&v>=0&&v<=1;
 const rgb=v=>Array.isArray(v)&&v.length===3&&v.every(unit);
 const mix=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+export const TRANSITION_DEFAULT=Object.freeze({edge_strength:1,mask_scale:8,mask_softness:.13,cliff_bleed_ft:1.25,leaf_color:Object.freeze([.65,.34,.12]),snow_color:Object.freeze([.91,.94,.97]),scorch_color:Object.freeze([.15,.13,.11])});
+export function transitionSettings(value={}){
+  assert(value&&typeof value==="object"&&!Array.isArray(value),"Invalid transitions");
+  const s={...TRANSITION_DEFAULT,...value};
+  assert(unit(s.edge_strength)&&Number.isFinite(s.mask_scale)&&s.mask_scale>0&&s.mask_scale<=64&&unit(s.mask_softness)&&s.mask_softness<=.5&&Number.isFinite(s.cliff_bleed_ft)&&s.cliff_bleed_ft>=0&&s.cliff_bleed_ft<=20,"Invalid transition parameters");
+  for(const k of ["leaf_color","snow_color","scorch_color"])assert(rgb(s[k]),"Invalid transition color");
+  if(s.mask!==undefined)assert(s.mask&&typeof s.mask.manifest==="string"&&s.mask.manifest.length>0&&typeof s.mask.asset==="string"&&s.mask.asset.length>0,"Invalid mask binding");
+  return structuredClone(s);
+}
 export const SURFACE_DEFAULT=Object.freeze({growth:0,health:1,moisture:0,leaves:0,snow:0,scorch:0,burn:0});
 export function surface(value={}){
   assert(value&&typeof value==="object"&&!Array.isArray(value),"Invalid surface state");
@@ -20,7 +29,7 @@ export function validateMaterials(m){
   const ids=new Set();
   for(const a of v.variants){assert(typeof a.id==="string"&&!ids.has(a.id)&&rgb(a.color)&&Number.isFinite(a.weight)&&a.weight>0,"Invalid variant");ids.add(a.id);}
   assert(Number.isFinite(v.variants.reduce((sum,a)=>sum+a.weight,0)),"Invalid total weight");
-  return structuredClone(m);
+  return {...structuredClone(m),transitions:transitionSettings(m.transitions)};
 }
 export function stableUnit(seed,address,salt=""){
   let hash=2166136261;
@@ -39,7 +48,7 @@ export function appearance(catalog,seed,address,cell,kind){
   if(kind!=="top")return {color:m.side,cover:[0,0,0],vegetation:0};
   const grass=variantFor(catalog,seed,address);
   const plant=m.vegetation?s.growth:0,green=mix([.61,.48,.26],grass.color,s.health);
-  const color=mix(mix(m.top,green,plant),[.15,.13,.11],s.scorch*.85).map(v=>v*(1-.22*s.moisture));
+  const color=mix(mix(m.top,green,plant),(catalog.transitions??TRANSITION_DEFAULT).scorch_color,s.scorch*.85).map(v=>v*(1-.22*s.moisture));
   return {color,cover:[s.leaves,s.snow,s.scorch],vegetation:plant*(1-s.snow)*(1-s.scorch),variant:grass.id};
 }
 export function ignite(catalog,cell){

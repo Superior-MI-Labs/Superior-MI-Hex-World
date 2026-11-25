@@ -1,16 +1,17 @@
 import {World,Clock,effect,effectActive,physicalPosition} from "./core.mjs";
 import {vertices,uniformShape,sampleSurface,hasVolume} from "./geometry.mjs";
-import {editVertex,cellFaces,vertexLimits} from "./terrain.mjs";
+import {editVertex,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
+import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle} from "./editor.mjs";
 import {project,pickFace,billboard} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
-import {createAtlasSprite} from "./assets.mjs";
-import {validateMaterials,surface,appearance,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
+import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
+import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
 const base=await fetch("./examples/world.json").then(r=>{if(!r.ok)throw Error("World unavailable");return r.json()});
 const catalog=validateMaterials(await fetch("./examples/materials.json").then(r=>{if(!r.ok)throw Error("Materials unavailable");return r.json();}));
-let world,grid,clock=new Clock(base.simulation),yaw=0,flame=null,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24;
+let world,grid,clock=new Clock(base.simulation),yaw=0,flame=null,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24,panX=0,panY=50,meshCache;
 const ground=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
 const domain=ground.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
 let actor=null,actorAddress=[0,0,0],spriteRequest=0;
@@ -36,7 +37,7 @@ function refreshVertexOptions(){
 function selectFace(key){faceSelect.value=key;sync();}
 
 const get=()=>world.get(...selected).shape;
-function reset(){const n=base.grid.geometry_subdivisions;grid={...base.grid};world=new World({...base,grid});for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));selected=[0,0,0];faceSelect.value="upper";actorAddress=[0,0,0];flame=null;dirty=true;sync();}
+function reset(){const n=base.grid.geometry_subdivisions;grid={...base.grid};world=new World({...base,grid});meshCache=new TerrainFaceCache(world);for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));selected=[0,0,0];faceSelect.value="upper";actorAddress=[0,0,0];flame=null;dirty=true;sync();}
 function sync(){
   $("level").value=selected[2];refreshVertexOptions();
   const n=grid.geometry_subdivisions,{layer,index}=activeRef(),s=get(),height=s[layer][index];
@@ -65,31 +66,49 @@ function simulate(seconds){if(seconds<=0)return;const edits=[];for(const address
 reset();
 $("level").onchange=()=>{selected=[selected[0],selected[1],Number($("level").value)];sync();};
 loadActor();
+if(catalog.transitions.mask)createAtlasMask(catalog.transitions.mask).then(image=>{gpu.setTransitionMask(image);$("maskStatus").textContent="Atlas transition mask loaded";}).catch(e=>{$("maskStatus").textContent="Procedural mask fallback: "+e.message;});
+$("transitions").onchange=()=>dirty=true;
+function demoSurface(kind){
+  const edits=[];
+  for(const address of ground){
+    const c=world.get(...address);if(!hasVolume(c.shape))continue;
+    const [q,r]=address,patch=q>=1||q===0&&r>0;
+    const s={growth:.8,health:1,moisture:0,snow:0,leaves:0,scorch:0,burn:0};
+    let material="soil";
+    if(patch){if(kind==="snow")s.snow=1;else if(kind==="leaves"){s.leaves=1;s.health=.35;}else if(kind==="scorch"){s.scorch=1;s.growth=0;}else if(kind==="sand"){material="sand";s.growth=0;}else if(kind==="wet")s.moisture=1;}
+    edits.push({address,value:withSurface({...c,material},s)});
+  }
+  world.apply(edits);dirty=true;sync();
+}
+$("transitionDemo").onchange=()=>{const k=$("transitionDemo").value;if(k)demoSurface(k);$("transitionDemo").value="";};
 $("reset").onclick=reset;
 $("surface").onchange=sync;$("vertex").onchange=sync;$("connected").onchange=sync;$("height").oninput=()=>move(Number($("height").value));
 const presets={Full:[1,1,1,1,1,1,1],Half:[.5,.5,.5,.5,.5,.5,.5],Slope:[1,1,.5,0,0,.5,.5],Corner:[1,0,1,1,1,1,1],Peak:[0,0,0,0,0,0,1],Basin:[1,1,1,1,1,1,0],Empty:[0,0,0,0,0,0,0]};
 for(const [name,h] of Object.entries(presets)){const b=document.createElement("button");b.textContent=name;b.title="Replace selected cell only";b.onclick=()=>set({lower:Array(7).fill(0),upper:h.map(v=>Math.round(v*grid.geometry_subdivisions))});$("presets").append(b);}
 const ceiling=document.createElement("button");ceiling.textContent="Raised slab";ceiling.onclick=()=>set(uniformShape(grid.geometry_subdivisions,grid.geometry_subdivisions/2));$("presets").append(ceiling);
 $("save").onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(world.snapshot(),null,2)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download="hex-world.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-$("load").onchange=async()=>{try{const file=$("load").files[0];if(!file)return;if(file.size>5e6)throw Error("Lab import limit 5 MB");const next=World.restore(JSON.parse(await file.text())),g=next.config.grid;if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||!domain.every(a=>next.get(...a)))throw Error("This lab previews a 19-column, five-level domain with two subdivisions");world=next;grid=g;selected=[0,0,0];faceSelect.value="upper";dirty=true;flame=null;sync();$("message").textContent="World imported";}catch(e){$("message").textContent=e.message;}finally{$("load").value="";}};
+$("load").onchange=async()=>{try{const file=$("load").files[0];if(!file)return;if(file.size>5e6)throw Error("Lab import limit 5 MB");const next=World.restore(JSON.parse(await file.text())),g=next.config.grid;if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||!domain.every(a=>next.get(...a)))throw Error("This lab previews a 19-column, five-level domain with two subdivisions");world=next;meshCache=new TerrainFaceCache(world);grid=g;selected=[0,0,0];faceSelect.value="upper";dirty=true;flame=null;sync();$("message").textContent="World imported";}catch(e){$("message").textContent=e.message;}finally{$("load").value="";}};
 $("mode").onchange=()=>clock.configure($("mode").value);$("step").onclick=()=>{const before=clock.simulation;clock.advance(6);simulate(clock.simulation-before);};$("fire").onclick=()=>flame={address:[...selected],instance:effect({behavior:"persistent"},clock.simulation)};$("timed").onclick=()=>flame={address:[...selected],instance:effect({behavior:"timed",duration:5},clock.simulation)};$("rotate").onclick=()=>yaw=(yaw+1)%6;$("zoom").oninput=()=>scale=Number($("zoom").value);
 const verticalScale=Math.sqrt(2/3);
-function view(p){return project(p,{yaw,scale,width:canvas.width,height:canvas.height});}
+function view(p){return project(p,{yaw,scale,width:canvas.width,height:canvas.height,panX,panY});}
 function projectLocal(a,p){const o=physicalPosition(...a,grid);return view([o.x+p[0],o.y+p[1],o.z+p[2]]);}
 function path(p){ctx.beginPath();p.forEach(({x,y},i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();}
 function polygon(p,fill,stroke){path(p);if(fill){ctx.fillStyle=fill;ctx.fill();}if(stroke){ctx.strokeStyle=stroke;ctx.stroke();}}
 function pos(e){const b=canvas.getBoundingClientRect();return [(e.clientX-b.left)*canvas.width/b.width,(e.clientY-b.top)*canvas.height/b.height];}
 
-canvas.onpointerdown=e=>{if(e.button!==0)return;const [x,y]=pos(e),handle=nearestHandle(handles,x,y,vertexSelect.value);
+canvas.onpointerdown=e=>{const [x,y]=pos(e);if(e.button===1||e.button===2){e.preventDefault();drag={id:e.pointerId,pan:true,x,y,panX,panY};canvas.setPointerCapture(e.pointerId);return;}if(e.button!==0)return;const handle=nearestHandle(handles,x,y,vertexSelect.value);
   if(handle){vertexSelect.value=handleKey(handle);sync();drag={id:e.pointerId,y,h:get()[handle.layer][handle.index],ref:{layer:handle.layer,index:handle.index}};canvas.setPointerCapture(e.pointerId);return;}
   const hit=pickFace(faces,x,y,view);if(hit){selected=[...hit.address];selectFace(faceKey(hit));return;}
   // Empty cells can be selected at their base footprint when not occluded.
   for(const a of domain){if(a[2]!==selected[2]||hasVolume(world.get(...a).shape))continue;path(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)));if(ctx.isPointInPath(x,y)){selected=[...a];selectFace("upper");return;}}
 };
-canvas.onpointermove=e=>{if(drag?.id===e.pointerId)move(drag.h+(drag.y-pos(e)[1])/(scale*verticalScale*grid.vertical_ft/grid.geometry_subdivisions),drag.ref);};
+canvas.onpointermove=e=>{if(drag?.id!==e.pointerId)return;if(drag.pan){const [x,y]=pos(e);panX=drag.panX+x-drag.x;panY=drag.panY+y-drag.y;return;}move(drag.h+(drag.y-pos(e)[1])/(scale*verticalScale*grid.vertical_ft/grid.geometry_subdivisions),drag.ref);};
+canvas.oncontextmenu=e=>e.preventDefault();
+canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=Math.max(12,Math.min(48,scale*Math.exp(-e.deltaY*.001))),ratio=next/scale;panX=x-canvas.width/2-(x-canvas.width/2-panX)*ratio;panY=y-canvas.height/2-(y-canvas.height/2-panY)*ratio;scale=next;$("zoom").value=String(next);},{passive:false});
+$("resetView").onclick=()=>{yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
 canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
 function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);ctx.clearRect(0,0,900,450);
-  if(dirty){faces=domain.flatMap(a=>{const c=world.get(...a);return cellFaces(world,a,grid).map(f=>({...f,...appearance(catalog,base.id,a,c,f.kind)}));});dirty=false;}
+  if(dirty){faces=decorateTerrain(world,domain,catalog,{enabled:$("transitions").checked,cache:meshCache});dirty=false;}
   let sprite=null;
   if(actor&&$("showActor").checked){
     actor.update(clock.visual*1000).catch(e=>{$("assetStatus").textContent=e.message;actor=null;});
@@ -98,12 +117,12 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
   }
   const sprites=[];
   if($("vegetation").checked)for(const f of faces){
-    if(f.kind!=="top"||f.vegetation<=0||stableUnit(base.id,f.address,"tuft"+f.triangle)>f.vegetation)continue;
+    if(f.kind!=="top"||f.vegetation<=0||stableUnit(world.config.id,f.address,"tuft"+f.triangle)>f.vegetation)continue;
     const p=[0,1,2].map(i=>f.points.reduce((s,v)=>s+v[i]/3,0)),h=.55+f.vegetation*1.1;
     sprites.push({image:tufts.get(f.variant),revision:0,points:billboard(p,yaw,h*.9,h)});
   }
   if(sprite)sprites.push(sprite);
-  gpu.render(faces,view,{selected,pattern:$("pattern").checked,sprites});
+  gpu.render(faces,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked});
   if($("wire").checked){
     for(const a of domain){if(a[2]!==selected[2]||hasVolume(world.get(...a).shape))continue;polygon(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)),null,"#344b56");}
 
@@ -125,6 +144,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),mesh_triangles:faces.length,renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:flame?.instance.behavior??"none",active:!!flame&&effectActive(flame.instance,clock.simulation)},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),mesh_triangles:faces.length,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:flame?.instance.behavior??"none",active:!!flame&&effectActive(flame.instance,clock.simulation)},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

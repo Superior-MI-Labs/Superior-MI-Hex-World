@@ -1,0 +1,28 @@
+{
+  "schema": "smi-visual-pack/1",
+  "pack_id": "smi.hex.transition.fixture",
+  "version": "1.0.0",
+  "description": "Procedural periodic grayscale transition test mask; not production artwork.",
+  "license": "CC0-1.0",
+  "textures": {
+    "mask": {
+      "path": "textures/mask.png",
+      "width_px": 64,
+      "height_px": 64,
+      "alpha": "straight"
+    }
+  },
+  "assets": [
+    {
+      "id": "smi.hex.transition.mask",
+      "kind": "region",
+      "texture": "mask",
+      "rect_px": [
+        0,
+        0,
+        64,
+        64
+      ]
+    }
+  ]
+}

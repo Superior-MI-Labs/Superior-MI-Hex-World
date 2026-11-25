@@ -38,12 +38,12 @@ export function httpProvider(fetcher=fetch){
     const text=await r.text();assert(text.length<=5e6,"Manifest exceeds size limit");return JSON.parse(text);
   }};
 }
-export async function createAtlasSprite({manifest,asset,state=null,height_ft=4},registry=new AssetRegistry()){
-  if(!Number.isFinite(height_ft)||height_ft<=0)throw Error("Invalid sprite height");
+export async function createAtlasRaster({manifest,asset,state=null,regionOnly=false},registry=new AssetRegistry()) {
   const url=new URL(manifest,location.href);
   // Default provider is only installed on this private registry.
   registry.register("http",httpProvider());
   const pack=await registry.load("http",url.href),map=validateSpritePack(pack,asset);
+  if(regionOnly)assert(map.get(asset).kind==="region","Transition mask must reference a static Atlas region");
   const images=new Map();
   async function getImage(key){
     if(images.has(key))return images.get(key);
@@ -53,9 +53,19 @@ export async function createAtlasSprite({manifest,asset,state=null,height_ft=4},
   const renderer=globalThis.VisualAtlasRenderer.create({getAsset:id=>map.get(id),getImage,slots:globalThis.VisualAtlasSlots,timeline:globalThis.VisualAtlasTimeline,visualCore:globalThis.VisualAtlasVisualCore});
   const [w,h]=renderer.sizeFor(asset),canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
   let revision=0,busy=false,last=-Infinity,pivot=[.5,1];
-  return {image:canvas,width:height_ft*w/h,height:height_ft,get pivot(){return pivot;},get revision(){return revision;},
+  return {image:canvas,pixelWidth:w,pixelHeight:h,get pivot(){return pivot;},get revision(){return revision;},
     async update(time){
       if(busy||time-last<80)return false;busy=true;
       try{ctx.clearRect(0,0,w,h);await renderer.drawAsset(asset,ctx,0,0,w,h,time,{},state);pivot=renderer.pivotFor(asset,time,state)??[.5,1];const out=canvas.getContext("2d");out.clearRect(0,0,w,h);out.drawImage(back,0,0);revision++;last=time;return true;}finally{busy=false;}
     }};
+}
+
+export async function createAtlasSprite({height_ft=4,...binding},registry){
+  if(!Number.isFinite(height_ft)||height_ft<=0)throw Error("Invalid sprite height");
+  const raster=await createAtlasRaster(binding,registry);
+  return Object.assign(raster,{width:height_ft*raster.pixelWidth/raster.pixelHeight,height:height_ft});
+}
+export async function createAtlasMask(binding){
+  const raster=await createAtlasRaster({...binding,regionOnly:true});
+  await raster.update(0);return raster.image;
 }

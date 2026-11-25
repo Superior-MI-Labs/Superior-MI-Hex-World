@@ -20,6 +20,15 @@ with sync_playwright() as p:
       return [[far,near],[near,far]].map(f=>{r.render(f,view,{pattern:false});return r.readPixel(15,15);});
     }""")
     assert all(c[1]>240 and c[0]<10 for c in result),result
+    page.wait_for_function("document.querySelector('#maskStatus').textContent === 'Atlas transition mask loaded'")
+    page.locator("#transitionDemo").select_option("snow")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).transition_triangles > 0")
+    page.locator("#transitionDebug").check()
+    page.locator("#transitionDebug").uncheck()
+    page.locator("#transitions").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).transitions === false")
+    page.locator("#transitions").check()
+    page.get_by_role("button",name="Reset terrain").click()
     assert page.locator("#resolution").count()==0
     page.get_by_role("button",name="Reactive fire").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.burn===8")
@@ -62,6 +71,13 @@ with sync_playwright() as p:
     page.locator("#loadActor").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     page.get_by_role("button",name="Rotate 60°").click()
+    box=page.locator("#scene").bounding_box()
+    page.mouse.move(box["x"]+box["width"]/2,box["y"]+box["height"]/2)
+    page.mouse.down(button="middle")
+    page.mouse.move(box["x"]+box["width"]/2+50,box["y"]+box["height"]/2+20)
+    page.mouse.up(button="middle")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.panX > 0")
+    page.get_by_role("button",name="Reset view").click()
     page.screenshot(path="/tmp/hex-world-qa.png",full_page=True)
     assert not errors,errors
     print("GPU depth, Atlas sprite load, vertical construction and browser smoke passed")
