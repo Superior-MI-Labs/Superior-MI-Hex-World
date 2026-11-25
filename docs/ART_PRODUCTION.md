@@ -1,38 +1,39 @@
 # Hex World art production: parallel agent handoff
 
-The ten creator references define painterly fantasy quality, not reusable source art. They show frost-covered conifers, luminous crystal gardens, mossy ruins, warm autumn forest, wetlands, giant mushrooms, rocky trails, bright streams, evergreen woodland and flowering magical trees. Do not copy or upload reference images without separate permission. Generate original art with comparable richness; use CC0-1.0 where rights permit. No baked complete hex dioramas.
+Use the creator's fantasy references as an artistic quality benchmark: richly painted materials, organic silhouettes, warm highlights and cool shadows. Create original reusable source art and use CC0-1.0 where rights permit. Reference images are not themselves publication sources.
 
-## Shared standards
-- Geometry: 5 ft nearest-neighbor spacing; 5 ft cell height; 2.5 ft vertex snapping; six 60° yaw views; fixed orthographic 35.264° elevation. Do not bake hex borders, grid lines or fixed terrain silhouettes.
-- Ground/cliff textures: unprojected square 512 or 1024 px repeatable texture, opaque, no background, no perspective, no cast shadows. Deliver neutral grayscale detail first; optionally RGB detail modulation, NOT full-color albedo. Tile-check 3×3. Physical repeat is selected by host, default 5 ft.
-- Upright artwork: transparent straight-alpha PNG, full silhouette, no square tile or baked ground/shadow, clear root/feet anchor. Orthographic view at 35.264° elevation. Small assets 256–512 logical px high, large trees 512–1024; these are proposed source sizes, not world scale. Preserve matched pivots and logical sizes between states. First pilot uses camera-facing sprites; asymmetric six-direction sets are future runtime work, not required now.
-- Masks: periodic grayscale, opaque, black-to-white distribution, no baked color/hex border. Animation: original Atlas sequence with real measured frames, consistent logical canvas/pivot, timing, seamless loop.
-- Visual consistency: painterly texture, clear silhouettes, rich local value variation, warm highlights/cool shadows without strongly baked directional cast shadows, consistent world scale. Never add unrelated crystals/glow to every natural asset.
-- Every agent works in a separate pack/branch, unique pack and asset IDs under smi.hex.fantasy.<family>.*, version 0.1.0 pilot. Atlas owns all visual regions/sequences/states and packaging. Hex World owns role mapping and physical properties. No duplicate asset formats, no overwriting another agent's assets.
+## Workflow
 
-## Assignments (72 pilot assets/sequences)
-| Family | Count | Deliverables | Runtime |
-|---|---:|---|---|
-| ground | 8 | meadow fine/coarse, soil, mud, stone, sand, snow, paving | top detail; one active texture per style |
-| cliff | 4 | soil roots, layered earth, rock, mossy rock | side detail; one active texture per style |
-| grass | 12 | short/medium/tall, each green/dry/frosted/charred | static regions; choose three green variants for meadow-01/02/03 first |
-| foliage | 12 | 3 ferns, 3 flower clusters, 2 bushes, 2 reeds, 2 trailing vines | static sprite objects; automated scatter beyond grass deferred |
-| trees | 6 | pine, snowy pine, leafy, autumn, flowering, magical | static sprite objects; 12–30 ft suggested height |
-| props | 12 | 3 rocks, 3 mushroom clusters, 2 logs, 4 crystals | static sprite objects; scale per item |
-| transitions | 6 | irregular snow, moss, leaf litter, mud, scorch, breakup | current single grayscale mask; multi-overlay bindings deferred |
-| structures | 8 | pillar, broken pillar, arch, pedestal, masonry swatch, paving swatch, rubble, carved marker | detail textures or static props; geometry separately authored |
-| effects | 4 | flowing water, waterfall, fire, magic glow | Atlas sequences; manual sprite placement supported, fluid/emission engine deferred |
+Atlas owns the shared [authoring workflow](https://github.com/Superior-MI-Labs/Superior-MI-Icon-Atlas/blob/main/docs/ai/START-HERE.md) and [visual-only image brief](https://github.com/Superior-MI-Labs/Superior-MI-Icon-Atlas/blob/main/docs/ai/IMAGE-ENGINE-WORKFLOW.md). This document supplies host-specific art requirements to the production agent, not a prompt to forward wholesale to the image engine. Generate a small group of isolated subjects first, inspect the source art, then batch approved families and process their actual pixels. Use the existing Atlas workflow for packaging and release.
 
-## Agent delivery
-Read Atlas AGENTS.md, docs/ai/START-HERE.md, docs/ai/FORMAT-API.md and the matching recipe. First make 1–3 original candidate assets, review against creator references at native scale, then complete the pilot only after review. Measure actual crops; do not assume image-generator grid alignment. Deliver canonical self-contained Atlas ZIP, manifest/texture paths, IDs, original/license notices, contact sheet, proposed physical dimensions in feet, and truthful QA receipts. Use existing Atlas tools (qualify_asset_zip.py, validate_visual_pack.py, ai_acceptance.py). Publish only after creator/visual QA and normal Atlas release process. Provide a version-pinned HTTPS manifest URL with CORS-compatible images, not a GitHub HTML page. Do not create a second asset catalog or renderer.
+## Shared visual requirements
 
-## Integrator
-Copy the example style, map the required three vegetation IDs and top/side texture to the actual published Atlas IDs. Each binding is either a legacy string using the profile manifest or {"manifest":"https://.../manifest.json","asset":"actual.id"}. Relative paths resolve from the hosted profile document, not the Hex World page. Host the JSON with CORS and load its URL in the laboratory. It may reference many separate packs. A failed load keeps the previous style. Use grayscale or rgb_detail (RGB modulation, not albedo), strength 0–1. A separate object may use the existing manifest/asset input. Do not claim automatic seasonal foliage swaps, directional sprites, water physics, emissive lighting, per-material texture blending or new effect bindings; those require future implementation. Test every claimed state with the actual published art. Keep world data unchanged by style swaps.
+- Ground/cliff: unprojected seamless opaque square swatches, 512 or 1024 px; neutral grayscale or RGB detail modulation, or full-color albedo as selected by the style. Inspect a 3×3 repeat.
+- Upright sprites: isolated complete silhouettes on transparent straight-alpha PNG; orthographic 35.264° elevation; clear root or attachment point. Suggested logical height 256–512 px for small plants, 512–1024 px for large trees. Render ground and contact shadows separately in the host.
+- Directional artwork: billboard by default for symmetric plants; six ordered 60° yaw views where required for asymmetric objects. Match canvas, pivot, scale and state names across views.
+- Masks: periodic opaque grayscale coverage; animation: measured frames, stable anchors, natural motion and seamless loop where applicable.
+- Match the approved style and subject of the current family; reserve magical features for appropriate subjects.
 
-For responsive brush, foliage, switches, doors and effects, read [interaction asset handoff](INTERACTIONS.md). Do not bake physical or game behavior into art.
+## Pilot assignments (72 assets/sequences)
 
-For wind-responsive static or animated sheets, follow [environment artwork bindings](ENVIRONMENT_ART.md). Use canonical Atlas regions, sequences and state sets; capabilities are mapped in Hex World.
+| Family | Count | Deliverables |
+|---|---:|---|
+| ground | 8 | meadow fine/coarse, soil, mud, stone, sand, snow, paving |
+| cliff | 4 | soil roots, layered earth, rock, mossy rock |
+| grass | 12 | short/medium/tall, each green/dry/frosted/charred |
+| foliage | 12 | 3 ferns, 3 flower clusters, 2 bushes, 2 reeds, 2 trailing vines |
+| trees | 6 | pine, snowy pine, leafy, autumn, flowering, magical |
+| props | 12 | 3 rocks, 3 mushroom clusters, 2 logs, 4 crystals |
+| transitions | 6 | irregular snow, moss, leaf litter, mud, scorch, breakup |
+| structures | 8 | pillar, broken pillar, arch, pedestal, masonry swatch, paving swatch, rubble, carved marker |
+| effects | 4 | flowing water, waterfall, fire, magic glow |
 
-Per-material full-color albedo is now supported through style bindings; seasonal vegetation variants can also be supplied using the [environment artwork contract](ENVIRONMENT_ART.md). Ground texture artwork remains unprojected and seamless.
+These are production targets, not subjects to combine into one image. Preserve existing asset IDs. New general-purpose Atlas artwork uses unique `smi.world.fantasy.<family>.*` IDs and independent packs/branches.
 
-For directional sprites use [Hex World directional binding](DIRECTIONAL_ART.md). The six-view contract is host-specific; the canonical Atlas visual manifest remains unchanged.
+## Host integration (after source generation)
+
+World geometry uses 5 ft nearest-neighbor spacing and cell height, with 2.5 ft vertex subdivisions. World geometry and physical properties remain host-owned.
+
+Use canonical Atlas regions, sequences, state sets and supported compositions. The optional Atlas spatial profile carries suggested visual height, directional views and wind; host style roles and physical interaction remain separate. See [environment bindings](ENVIRONMENT_ART.md), [directional bindings](DIRECTIONAL_ART.md), [interaction handoff](INTERACTIONS.md) and the current [architecture](ARCHITECTURE.md). For production scatter, use the existing style families and seasonal variant mappings, with spacing and wind where appropriate.
+
+Deliver the canonical self-contained Atlas ZIP, source manifest and textures, IDs, rights notice, measured pivots, proposed dimensions in feet, previews and QA receipt through the Atlas acceptance and publication workflow. Resolve the published ZIP through the Atlas public catalog and pin its SHA-256 where supported. Validate actual assets in Hex World; a fixture or catalog entry is not proof of production compatibility. Style failures retain the previous style; style swaps and rendering leave authoritative world data unchanged.
