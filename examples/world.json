@@ -1,0 +1,17 @@
+{
+  "schema": "smi-hex-world/1",
+  "id": "material-lab",
+  "grid": {
+    "horizontal_ft": 5,
+    "vertical_ft": 5,
+    "chunk_size": [
+      16,
+      16,
+      16
+    ]
+  },
+  "simulation": {
+    "mode": "frozen",
+    "rate": 1
+  }
+}

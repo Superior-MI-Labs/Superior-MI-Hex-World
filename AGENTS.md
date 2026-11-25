@@ -1,0 +1,2 @@
+# Engineering rules
+Read docs/ARCHITECTURE.md before changes. World data is authoritative; view and animation never mutate it. Extend existing contracts before adding systems. Keep game rules outside core. Reuse Atlas smi-visual-pack/1; no parallel texture or animation format. Unknown chunks are not air. Test negative coordinates, boundaries, serialization and frozen simulation. No arbitrary code from manifests. Run node --test tests/core.test.mjs before publication. Report actual test results, not assumptions.

@@ -1,0 +1,74 @@
+// Game-neutral spatial and time contracts. No DOM or wall-clock dependency.
+const int = Number.isSafeInteger;
+const positive = n => Number.isFinite(n) && n > 0;
+const requireThat = (ok, msg) => { if (!ok) throw new Error(msg); };
+const copy = value => structuredClone(value);
+export const DIRECTIONS = Object.freeze([[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]].map(Object.freeze));
+export const addressKey = (q,r,z) => { requireThat([q,r,z].every(int),"Invalid address"); return [q,r,z].join(","); };
+export function validateWorld(config) {
+  requireThat(config?.schema === "smi-hex-world/1" && typeof config.id === "string" && config.id.length > 0,"Invalid world");
+  const g=config.grid;
+  requireThat(positive(g?.horizontal_ft)&&positive(g?.vertical_ft),"Invalid grid scale");
+  requireThat(Array.isArray(g.chunk_size)&&g.chunk_size.length===3&&g.chunk_size.every(n=>int(n)&&n>0&&n<=256),"Invalid chunk dimensions");
+  requireThat(["frozen","manual","turn-based","real-time","scaled"].includes(config.simulation?.mode)&&positive(config.simulation?.rate),"Invalid clock configuration");
+  return copy(config);
+}
+export function chunkOf(q,r,z,size=[16,16,16]) {
+  addressKey(q,r,z);
+  requireThat(size.length===3&&size.every(n=>int(n)&&n>0&&n<=256),"Invalid chunk dimensions");
+  const coords=[q,r,z],chunk=coords.map((n,i)=>Math.floor(n/size[i]));
+  // modulo avoids overflow of intermediate chunk*size near safe-integer limits.
+  const local=coords.map((n,i)=>((n%size[i])+size[i])%size[i]);
+  return {chunk,local};
+}
+export function physicalPosition(q,r,z,grid) {
+  addressKey(q,r,z);
+  return {x:grid.horizontal_ft*(q+r/2),y:grid.horizontal_ft*Math.sqrt(3)*r/2,z:z*grid.vertical_ft};
+}
+export function neighbors(q,r,z) {
+  addressKey(q,r,z);
+  return [...DIRECTIONS.map(([a,b])=>[q+a,r+b,z]),[q,r,z+1],[q,r,z-1]].filter(a=>a.every(int));
+}
+export function shape(value) {
+  requireThat(value && ["empty","full","slab","ramp"].includes(value.kind),"Invalid shape");
+  if(value.kind==="slab") requireThat(positive(value.height)&&value.height<=1,"Invalid slab");
+  if(value.kind==="ramp") requireThat(int(value.direction)&&value.direction>=0&&value.direction<6&&Number.isFinite(value.low)&&Number.isFinite(value.high)&&value.low>=0&&value.low<value.high&&value.high<=1,"Invalid ramp");
+  return copy(value);
+}
+function cell(value) {
+  requireThat(typeof value?.material==="string"&&value.material.length>0,"Invalid material");
+  return {...copy(value),shape:shape(value.shape)};
+}
+export class World {
+  #config; #chunks=new Map();
+  constructor(config){this.#config=validateWorld(config);}
+  get config(){return copy(this.#config);}
+  #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
+  defineChunk(cq,cr,cz,defaultCell={material:"air",shape:{kind:"empty"}}){
+    const key=addressKey(cq,cr,cz);requireThat(!this.#chunks.has(key),"Chunk already defined");
+    this.#chunks.set(key,{defaultCell:cell(defaultCell),cells:new Map()});
+  }
+  get(q,r,z){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);return chunk ? copy(chunk.cells.get(local)??chunk.defaultCell):undefined;}
+  set(q,r,z,value){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");chunk.cells.set(local,cell(value));}
+}
+export class Clock {
+  #mode; #rate; #simulation=0; #visual=0;
+  constructor({mode="frozen",rate=1}={}){this.configure(mode,rate);}
+  configure(mode,rate=1){requireThat(["frozen","manual","turn-based","real-time","scaled"].includes(mode)&&positive(rate),"Invalid clock");this.#mode=mode;this.#rate=rate;}
+  get simulation(){return this.#simulation;} get visual(){return this.#visual;}
+  advance(seconds,source="manual"){requireThat(Number.isFinite(seconds)&&seconds>=0,"Invalid delta");
+    const allowed=(source==="manual"&&["manual","turn-based"].includes(this.#mode))||(source==="realtime"&&["real-time","scaled"].includes(this.#mode));
+    if(allowed){const next=this.#simulation+seconds*(this.#mode==="scaled"?this.#rate:1);requireThat(Number.isFinite(next),"Clock overflow");this.#simulation=next;}return this.#simulation;}
+  animate(seconds){requireThat(Number.isFinite(seconds)&&seconds>=0&&Number.isFinite(this.#visual+seconds),"Invalid delta");return this.#visual+=seconds;}
+}
+export function effect(definition,startedAt=0){
+  requireThat(["persistent","decorative","timed","reactive"].includes(definition?.behavior)&&Number.isFinite(startedAt)&&startedAt>=0,"Invalid effect");
+  if(definition.behavior==="timed")requireThat(positive(definition.duration),"Invalid duration");
+  return {...copy(definition),startedAt};
+}
+export function effectActive(instance,simulationTime){return instance.behavior!=="timed"||simulationTime-instance.startedAt<instance.duration;}
+export class AssetRegistry {
+  #providers=new Map();
+  register(id,provider){requireThat(typeof id==="string"&&id.length>0&&!this.#providers.has(id)&&typeof provider?.loadPack==="function","Invalid provider");this.#providers.set(id,provider);}
+  async load(id,reference){const provider=this.#providers.get(id);requireThat(provider,"Unknown provider");const pack=await provider.loadPack(reference);requireThat(pack?.schema==="smi-visual-pack/1","Unsupported visual pack");return copy(pack);}
+}
