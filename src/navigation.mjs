@@ -123,8 +123,10 @@ export function interactObject(world,id,address,profile,interactions,targetId=nu
   const actor=world.getEntity(id);assert(actor,"Unknown interaction actor");
   assert(validAddress(address),"Invalid interaction address");
   assert(actor.anchor==="surface"&&actor.offset_ft.every(v=>v===0),"Interaction requires centered surface actor");
-  const route=planObjectMove(world,id,address,profile);
-  if(!route.ok||route.path.length>2)return {ok:false,reason:"Target outside reachable interaction range",events:[]};
+  const p=validateMovement(profile),g=world.config.grid;
+  const same=actor.address.every((v,i)=>v===address[i]);
+  const reachable=same?standability(world,address,p):step(world,g,actor.address,address,p);
+  if(!reachable.ok)return {ok:false,reason:"Target outside reachable interaction range",events:[]};
   return {ok:true,events:[useInteraction(world,id,address,interactions,targetId)]};
 }
 
@@ -156,4 +158,16 @@ export function sampleRoute(points,distance){
     distance-=length;
   }
   const last=points.at(-1);return {point:[...last.point],address:[...last.address],done:true};
+}
+
+// Chunk revisions cover actual route support and overhead clearance, not
+// surface-only state or camera changes. A conservative invalidation is enough
+// for transient playback; the committed destination remains authoritative.
+export function routeGeometryStamp(world,path,profile){
+  const p=validateMovement(profile),g=world.config.grid,above=Math.ceil((p.height_ft+p.max_step_ft)/g.vertical_ft)+1;
+  const revisions=[];
+  for(const [q,r,z] of path)for(let dz=-1;dz<=above;dz++){
+    const level=z+dz;if(Number.isSafeInteger(level))revisions.push(world.geometryRevisionAt(q,r,level));
+  }
+  return revisions.join("|");
 }

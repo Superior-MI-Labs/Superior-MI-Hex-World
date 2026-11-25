@@ -4,7 +4,7 @@ import {readFileSync} from "node:fs";
 import {World} from "../src/core.mjs";
 import {uniformShape} from "../src/geometry.mjs";
 import {placeObject} from "../src/entities.mjs";
-import {planObjectMove,moveObject,interactObject} from "../src/navigation.mjs";
+import {planObjectMove,moveObject,interactObject,routeGeometryStamp} from "../src/navigation.mjs";
 import {validateInteractions,bendBillboard,cellTarget,contactResponse,interactionTags} from "../src/interactions.mjs";
 import {billboard} from "../src/camera.mjs";
 const p=validateInteractions(JSON.parse(readFileSync(new URL("../examples/interactions.json",import.meta.url))));
@@ -42,3 +42,5 @@ test("visual bending anchors roots, ignores other floors and returns neutral out
  const c=w.get(0,0,0);c.components.surface.snow=1;assert.equal(contactResponse(p,cellTarget([0,0,0],c)),null);
 });
 test("invalid interaction profile fails before movement commit",()=>{const w=world(),before=w.snapshot();assert.throws(()=>moveObject(w,"actor",[0,0,0],movement,{interactions:{schema:"bad"}}));assert.deepEqual(w.snapshot(),before);});
+
+test("motion stamp ignores surface and tag edits but detects changed route geometry",()=>{const w=world(),path=[[-1,0,0],[0,0,0]],stamp=routeGeometryStamp(w,path,movement),c=w.get(0,0,0);w.set(0,0,0,{...c,components:{...c.components,surface:{growth:.4},interaction_tags:["usable"]}});assert.equal(routeGeometryStamp(w,path,movement),stamp);w.set(0,0,1,{material:"stone",shape:uniformShape(2)});assert.notEqual(routeGeometryStamp(w,path,movement),stamp);});

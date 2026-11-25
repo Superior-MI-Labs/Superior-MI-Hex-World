@@ -12,3 +12,5 @@ For water, snow, leaves: optional ripple, splash, footprints or rustle sequences
 
 ## Acceptance
 Preview must not trigger events; a failed move must not alter state or emit signals; a committed multi-cell move must report intermediate contacts exactly once per visit; changing view/cutaway/LOD must not change signals. The visual bend must hold root fixed, reject different-floor contacts and relax at distance. Save/load preserves tags, not transient presentation or signals. Do not confuse the pilot with continuous collision or a game rules engine.
+
+The laboratory can import a local interaction profile JSON and restore defaults. This is session configuration; host applications should version/pin their chosen profile outside world saves. Use the existing profile schema and do not ship executable behavior in artwork.

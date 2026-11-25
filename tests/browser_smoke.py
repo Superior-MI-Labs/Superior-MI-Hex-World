@@ -210,6 +210,13 @@ with sync_playwright() as p:
     page.locator("#setCellTags").click()
     page.locator("#useCell").click()
     assert "environment.use" in page.locator("#interactionStatus").text_content()
+    custom={"schema":"smi-hex-interactions/1","rules":[{"id":"custom-use","event":"use","match":{"kind":"cell","tags":["usable"]},"signal":"custom.test"}]}
+    page.locator("#importInteractions").set_input_files({"name":"custom.json","mimeType":"application/json","buffer":json.dumps(custom).encode()})
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).interaction_rules===1")
+    page.locator("#useCell").click()
+    assert "custom.test" in page.locator("#interactionStatus").text_content()
+    page.locator("#resetInteractions").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).interaction_rules===7")
     page.locator("#moveObject").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).interaction_events.some(e=>e.signals.some(s=>s.signal==='environment.sensor.enter'))")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).bent_sprites>0")

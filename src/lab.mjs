@@ -9,7 +9,7 @@ import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
 import {fetchStyle,vegetationSamples} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding} from "./entities.mjs";
-import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute} from "./navigation.mjs";
+import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
 import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
 import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettlement} from "./settlement.mjs";
 import {contactShadows} from "./lighting.mjs";
@@ -20,7 +20,8 @@ const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext(
 const gpu=createRenderer($("terrain"));
 const base=await fetch("./examples/world.json").then(r=>{if(!r.ok)throw Error("World unavailable");return r.json()});
 const movement=validateMovement(await fetch("./examples/movement.json").then(r=>{if(!r.ok)throw Error("Movement profile unavailable");return r.json();}));
-const interactions=validateInteractions(await fetch("./examples/interactions.json").then(r=>{if(!r.ok)throw Error("Interactions unavailable");return r.json();}));
+const defaultInteractions=validateInteractions(await fetch("./examples/interactions.json").then(r=>{if(!r.ok)throw Error("Interactions unavailable");return r.json();}));
+let interactions=defaultInteractions;
 const catalog=validateMaterials(await fetch("./examples/materials.json").then(r=>{if(!r.ok)throw Error("Materials unavailable");return r.json();}));
 let world,grid,clock=new Clock(base.simulation),yaw=0,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24,panX=0,panY=50,meshCache;
 const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
@@ -58,6 +59,9 @@ let preview=null,routePreview=null,visibilityPreview=null;
 const playback=new Map();
 let interactionEvents=[],contactByCell=new Map();
 const parseTags=s=>interactionTags(s.split(",").map(v=>v.trim()).filter(Boolean));
+function setInteractions(profile){interactions=validateInteractions(profile);contactByCell.clear();showEvents([]);$("interactionProfileStatus").textContent=interactions.rules.length+" rules loaded";}
+$("importInteractions").onchange=async()=>{try{const f=$("importInteractions").files[0];if(!f)return;if(f.size>256000)throw Error("Interaction profile exceeds 256 KB");setInteractions(JSON.parse(await f.text()));}catch(e){$("interactionProfileStatus").textContent="Previous profile retained: "+e.message;}finally{$("importInteractions").value="";}};
+$("resetInteractions").onclick=()=>setInteractions(defaultInteractions);
 function showEvents(events){interactionEvents=events;const signals=events.flatMap(e=>e.signals.map(s=>s.signal));$("interactionStatus").textContent=events.length+" spatial events; "+(signals.join(", ")||"no matching signals");}
 $("setCellTags").onclick=()=>{try{const c=world.get(...selected);world.set(...selected,{...c,components:{...c.components,interaction_tags:parseTags($("cellTags").value)}});dirty=true;sync();}catch(e){$("interactionStatus").textContent=e.message;}};
 $("setObjectTags").onclick=()=>{try{world.setEntityTags($("objects").value,parseTags($("objectTags").value));syncConstruction();}catch(e){$("interactionStatus").textContent=e.message;}};
@@ -88,7 +92,7 @@ function routeAction(commit){try{
   const id=$("movingObject").value,result=commit?moveObject(world,id,[...selected],movement,{interactions,presentation:true}):planObjectMove(world,id,[...selected],movement);
   if(commit&&result.ok){
     const points=result.points;showEvents(result.events);
-    if($("animateWalk").checked&&points.length>1)playback.set(id,{points,started:clock.visual});else playback.delete(id);
+    if($("animateWalk").checked&&points.length>1)playback.set(id,{points,path:result.path,stamp:routeGeometryStamp(world,result.path,movement),started:clock.visual});else playback.delete(id);
     syncConstruction();
   }
   routePreview=commit?null:result.ok?{...result,points:routeWaypoints(world,result.path,movement)}:result;$("routeStatus").textContent=result.ok?(commit?"Moved: ":"Route: ")+(result.path.length-1)+" steps":result.reason;
@@ -251,7 +255,7 @@ canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=M
 $("resetView").onclick=()=>{yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
 canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
 function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);refreshRegion();ctx.clearRect(0,0,900,450);
-  if(dirty){const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;playback.clear();contactByCell=new Map();}
+  if(dirty){const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
   const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked,poses=new Map(),contacts=[];
   for(const [id,motion] of playback){const pose=sampleRoute(motion.points,(clock.visual-motion.started)*10);if(pose.done){playback.delete(id);continue;}poses.set(id,pose);contacts.push({id,point:pose.point});}
   let bent=0;
@@ -320,6 +324,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,interaction_events:interactionEvents,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
