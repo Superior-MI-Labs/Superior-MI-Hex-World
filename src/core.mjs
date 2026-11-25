@@ -50,7 +50,7 @@ export class World {
   get(q,r,z){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);return chunk ? copy(chunk.cells.get(local)??chunk.defaultCell):undefined;}
   set(q,r,z,value){this.apply([{address:[q,r,z],value}]);}
   apply(edits){
-    const pending=edits.map(({address,value})=>{const [key,local]=this.#location(...address),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");return {chunk,local,value:cell(value,this.#config.grid.geometry_subdivisions)};});
+    const pending=edits.map(({address,value})=>{requireThat(Array.isArray(address)&&address.length===3&&address.every(int),"Invalid edit address");const [key,local]=this.#location(...address),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");return {chunk,local,value:cell(value,this.#config.grid.geometry_subdivisions)};});
     for(const {chunk,local,value} of pending)chunk.cells.set(local,value);
   }
   snapshot(){
@@ -61,7 +61,7 @@ export class World {
     const w=new World(data.world),size=w.#config.grid.chunk_size;
     const validAddress=a=>Array.isArray(a)&&a.length===3&&a.every(int);
     for(const c of data.chunks){
-      requireThat(validAddress(c.address)&&Array.isArray(c.cells),"Invalid chunk record");
+      requireThat(validAddress(c.address)&&c.defaultCell&&Array.isArray(c.cells),"Invalid chunk record");
       w.defineChunk(...c.address,c.defaultCell);
       const seen=new Set();
       for(const e of c.cells){
