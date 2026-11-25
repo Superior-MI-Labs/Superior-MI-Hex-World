@@ -177,5 +177,6 @@ export function routeGeometryStamp(world,path,profile){
   for(const [q,r,z] of path)for(let dz=-1;dz<=above;dz++){
     const level=z+dz;if(Number.isSafeInteger(level))revisions.push(world.geometryRevisionAt(q,r,level));
   }
-  return world.collisionRevision+"|"+revisions.join("|");
+  const supports=world.entities().filter(e=>e.collider).map(e=>[e.id,world.geometryRevisionAt(...e.address)]);
+  return world.collisionRevision+"|"+JSON.stringify(supports)+"|"+revisions.join("|");
 }
