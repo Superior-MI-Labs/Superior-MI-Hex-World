@@ -10,7 +10,7 @@ import {loadStyle,vegetationSamples} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding} from "./entities.mjs";
 import {validateMovement,planObjectMove,routeWaypoints,sampleRoute} from "./navigation.mjs";
-import {cutawayView,traceVisibility} from "./visibility.mjs";
+import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
 import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettlement} from "./settlement.mjs";
 import {contactShadows} from "./lighting.mjs";
 import {validatePrefab,planPrefab,placePrefab,capturePrefab} from "./prefabs.mjs";
@@ -55,8 +55,18 @@ function prefabPlan(){
 let preview=null,routePreview=null,visibilityPreview=null;
 const playback=new Map();
 const cutLevel=()=> $("cutaway").value==="all"?null:Number($("cutaway").value);
-const displayedAddress=a=>cutLevel()===null||a[2]<=cutLevel();
-$("cutaway").onchange=()=>{dirty=true;visibilityPreview=null;if(!displayedAddress(selected)){selected=[selected[0],selected[1],cutLevel()];faceSelect.value="upper";sync();}};
+let cutCenter=null;
+const cutOptions=()=>({center:cutCenter,radius:Number($("cutRadius").value)});
+const displayedAddress=a=>cutLevel()===null||!cutawayMask(cutLevel(),cutOptions())(a);
+function refreshCutaway(){
+  dirty=true;visibilityPreview=null;
+  if(!displayedAddress(selected)){selected=[selected[0],selected[1],cutLevel()];faceSelect.value="upper";sync();}
+  $("cutStatus").textContent=cutCenter?"Centered at "+cutCenter.join(", "):"Global cutaway";
+}
+$("cutaway").onchange=refreshCutaway;
+$("cutRadius").onchange=refreshCutaway;
+$("localCut").onclick=()=>{cutCenter=selected.slice(0,2);if(cutLevel()===null)$("cutaway").value="0";refreshCutaway();};
+$("globalCut").onclick=()=>{cutCenter=null;refreshCutaway();};
 function eye(address){const c=world.get(...address);if(!c||!hasVolume(c.shape))throw Error("Select solid support");const o=physicalPosition(...address,grid);return [o.x,o.y,o.z+sampleSurface(c.shape,grid,0,0)+movement.height_ft*.85];}
 $("checkSight").onclick=()=>{try{const actor=world.getEntity($("movingObject").value);if(!actor)throw Error("Select an object");const from=eye(actor.address),to=eye(selected),result=traceVisibility(world,from,to);visibilityPreview={from,to,result};$("sightStatus").textContent=result.status+(result.address?" at "+result.address.join(", "):"");}catch(e){$("sightStatus").textContent=e.message;visibilityPreview=null;}};
 function syncMovement(){
@@ -72,7 +82,7 @@ function routeAction(commit){try{
     if($("animateWalk").checked&&points.length>1)playback.set(id,{points,started:clock.visual});else playback.delete(id);
     syncConstruction();
   }
-  routePreview=commit?null:result;$("routeStatus").textContent=result.ok?(commit?"Moved: ":"Route: ")+(result.path.length-1)+" steps":result.reason;
+  routePreview=commit?null:result.ok?{...result,points:routeWaypoints(world,result.path,movement)}:result;$("routeStatus").textContent=result.ok?(commit?"Moved: ":"Route: ")+(result.path.length-1)+" steps":result.reason;
 }catch(e){$("routeStatus").textContent=e.message;routePreview=null;}}
 $("previewRoute").onclick=()=>routeAction(false);$("moveObject").onclick=()=>routeAction(true);
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
@@ -127,7 +137,7 @@ const get=()=>world.get(...selected).shape;
 function reset(){
   const n=base.grid.geometry_subdivisions;grid={...base.grid};
   world=worldMode==="settlement"?buildSettlement(base,prefabCatalog,demoVisual):new World(worldMode==="exploration"?explorationConfig(base):base);
-  meshCache=new TerrainFaceCache(world);playback.clear();selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";
+  meshCache=new TerrainFaceCache(world);playback.clear();selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";
   if(worldMode==="exploration"){yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;refreshRegion(true);}
   else if(worldMode==="settlement"){ground=settlementGround;domain=settlementDomain;activeChunks=0;yaw=0;scale=16;panX=0;panY=65;$("zoom").value=16;}
   else{ground=island;domain=islandDomain;activeChunks=0;for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));}
@@ -195,7 +205,7 @@ $("load").onchange=async()=>{try{
   const next=World.restore(JSON.parse(await file.text())),g=next.config.grid,cfg=next.config,generated=cfg.generation?.profile===EXPLORATION_PROFILE,settlement=cfg.scene===SETTLEMENT;
   if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||g.chunk_size.some((n,i)=>n!==base.grid.chunk_size[i])||(!generated&&(cfg.generation||!((settlement?settlementDomain:islandDomain).every(a=>next.get(...a))))))throw Error("Unsupported laboratory world profile");
   if(generated){if(typeof cfg.generation.seed!=="string"||!cfg.generation.seed)throw Error("Invalid generation seed");loadViewport(next,viewportBounds({yaw:0,scale:24,width:canvas.width,height:canvas.height,panX:0,panY:50},g,undefined,120));}
-  world=next;meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();$("cutaway").value="all";selected=[0,0,0];faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
+  world=next;meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
   yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;$("worldMode").value=worldMode;
   if(generated)refreshRegion(true);else{ground=settlement?settlementGround:island;domain=settlement?settlementDomain:islandDomain;activeChunks=0;}
   sync();$("message").textContent="World imported";
@@ -221,7 +231,7 @@ canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=M
 $("resetView").onclick=()=>{yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
 canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
 function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);refreshRegion();ctx.clearRect(0,0,900,450);
-  if(dirty){const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level);faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;playback.clear();}
+  if(dirty){const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;playback.clear();}
   const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked;
   const visible=faces.filter(f=>visibleTriangle(f,view,canvas.width,canvas.height,scale*5));
   if($("vegetation").checked)for(const f of visible){
@@ -259,7 +269,7 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
   const activeEffects=world.effects().filter(e=>effectActive(e.instance,clock.simulation));
   for(const e of activeEffects)drawFire(e.address);
   for(const a of world.burningAddresses())drawFire(a);
-  if(routePreview?.ok){ctx.beginPath();for(const [i,a] of routePreview.path.entries()){const s=world.get(...a).shape,p=projectLocal(a,[0,0,sampleSurface(s,grid,0,0)]);if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);}ctx.strokeStyle="#64e3dc";ctx.lineWidth=3;ctx.stroke();ctx.lineWidth=1;}
+  if(routePreview?.ok){ctx.beginPath();let pen=false;for(const waypoint of routePreview.points){if(!displayedAddress(waypoint.address)){pen=false;continue;}const p=view(waypoint.point);if(pen)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);pen=true;}ctx.strokeStyle="#64e3dc";ctx.lineWidth=3;ctx.stroke();ctx.lineWidth=1;}
   if(visibilityPreview){const {from,to,result}=visibilityPreview,a=view(from),b=view(to);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle=result.status==="clear"?"#85e4a0":"#f29a85";ctx.setLineDash([6,4]);ctx.stroke();ctx.setLineDash([]);}
   for(const address of capture.values()){if(!displayedAddress(address))continue;const c=world.get(...address);if(c&&hasVolume(c.shape))polygon(vertices(c.shape,grid).upper.slice(0,6).map(p=>projectLocal(address,p)),null,"#c59df5");}
   if($("previewPrefab").checked&&preview){
@@ -282,6 +292,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),moving_presentations:playback.size,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

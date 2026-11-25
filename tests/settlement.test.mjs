@@ -4,7 +4,7 @@ import {readFileSync} from "node:fs";
 import {World,physicalPosition} from "../src/core.mjs";
 import {uniformShape} from "../src/geometry.mjs";
 import {cellFaces} from "../src/terrain.mjs";
-import {cutawayView,traceVisibility} from "../src/visibility.mjs";
+import {cutawayView,cutawayMask,traceVisibility} from "../src/visibility.mjs";
 import {findRoute,routeWaypoints,sampleRoute,standability} from "../src/navigation.mjs";
 import {buildSettlement,settlementDomain,SETTLEMENT} from "../src/settlement.mjs";
 const cfg={schema:"smi-hex-world/1",id:"test",grid:{horizontal_ft:5,vertical_ft:5,geometry_subdivisions:2,chunk_size:[16,16,16]},simulation:{mode:"frozen",rate:1}};
@@ -47,3 +47,6 @@ test("visual route follows shared edge and vertical step; ends at authoritative 
  assert.equal(sampleRoute(points,0).done,false);assert.equal(sampleRoute(points,100).done,true);
  assert.deepEqual(sampleRoute(points,100).address,[1,0,0]);assert.ok(Math.abs(sampleRoute(points,3.75).point[2]-3.75)<1e-8);
 });
+
+test("local cutaway removes only its hex-ring footprint and leaves outside roof geometry",()=>{const w=world();w.set(0,0,1,solid());w.set(2,0,1,solid());const before=w.snapshot(),v=cutawayView(w,0,{center:[0,0],radius:1});assert.equal(v.get(0,0,1).material,"air");assert.equal(v.get(2,0,1).material,"stone");const hidden=cutawayMask(0,{center:[-1,0],radius:1});assert.equal(hidden([0,0,1]),true);assert.equal(hidden([1,0,1]),false);assert.equal(hidden([0,0,0]),false);assert.deepEqual(w.snapshot(),before);});
+test("flat route keeps seam ownership for contact shadows",()=>{const w=world();w.set(0,0,0,solid());w.set(1,0,0,solid());const points=routeWaypoints(w,[[0,0,0],[1,0,0]],p);assert.equal(points.length,4);assert.deepEqual(sampleRoute(points,2).address,[0,0,0]);assert.deepEqual(sampleRoute(points,3).address,[1,0,0]);assert.equal(sampleRoute(points,5.01).done,true);});

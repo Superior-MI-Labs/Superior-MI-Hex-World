@@ -124,7 +124,7 @@ export function routeWaypoints(world,path,profile){
   const out=[];
   function add(address,xy,height){
     const o=physicalPosition(...address,g),point=[o.x+xy[0],o.y+xy[1],height],last=out.at(-1);
-    if(last&&Math.hypot(...point.map((v,i)=>v-last.point[i]))<EPS)return;
+    if(last&&last.address.every((v,i)=>v===address[i])&&Math.hypot(...point.map((v,i)=>v-last.point[i]))<EPS)return;
     out.push({address:[...address],point});
   }
   const first=standability(world,path[0],p);assert(first.ok,"Invalid route support");add(path[0],[0,0],first.height_ft);
@@ -139,6 +139,7 @@ export function sampleRoute(points,distance){
   assert(Array.isArray(points)&&points.length&&Number.isFinite(distance)&&distance>=0,"Invalid route sample");
   for(let i=1;i<points.length;i++){
     const a=points[i-1],b=points[i],length=Math.hypot(...b.point.map((v,j)=>v-a.point[j]));
+    if(length<=EPS)continue;
     if(distance<length)return {point:a.point.map((v,j)=>mix(v,b.point[j],distance/length)),address:[...(distance<length/2?a.address:b.address)],done:false};
     distance-=length;
   }

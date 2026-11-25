@@ -219,6 +219,8 @@ with sync_playwright() as p:
     box=page.locator("#scene").bounding_box()
     page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='0,0,0'")
+    page.locator("#localCut").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cutaway_center.join(',')==='0,0'")
     page.locator("#checkSight").click()
     assert page.locator("#sightStatus").text_content()=="clear"
     page.locator("#previewRoute").click()

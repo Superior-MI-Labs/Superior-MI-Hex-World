@@ -3,10 +3,18 @@ import {uniformShape,corners,vertices} from "./geometry.mjs";
 import {physicalPosition} from "./core.mjs";
 const EPS=1e-8;
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
-export function cutawayView(world,maxLevel){
+export function cutawayMask(maxLevel,{center=null,radius=1}={}){
   assert(Number.isSafeInteger(maxLevel),"Invalid cutaway level");
-  const air={material:"air",shape:uniformShape(0)};
-  return {get config(){return world.config;},get(q,r,z){const c=world.get(q,r,z);return c&&z>maxLevel?structuredClone(air):c;},geometryRevisionAt(q,r,z){return world.geometryRevisionAt(q,r,z);}};
+  assert(center===null||(Array.isArray(center)&&center.length===2&&center.every(Number.isSafeInteger)&&Number.isSafeInteger(radius)&&radius>=0&&radius<=128),"Invalid cutaway footprint");
+  return ([q,r,z])=>{
+    if(z<=maxLevel)return false;
+    if(center===null)return true;
+    const dq=q-center[0],dr=r-center[1];return Math.max(Math.abs(dq),Math.abs(dr),Math.abs(dq+dr))<=radius;
+  };
+}
+export function cutawayView(world,maxLevel,options){
+  const hidden=cutawayMask(maxLevel,options),air={material:"air",shape:uniformShape(0)};
+  return {get config(){return world.config;},get(q,r,z){const c=world.get(q,r,z);return c&&hidden([q,r,z])?structuredClone(air):c;},geometryRevisionAt(q,r,z){return world.geometryRevisionAt(q,r,z);}};
 }
 // Clip parameter interval to an affine inequality f(t)>=0.
 function clip(range,a,b){
