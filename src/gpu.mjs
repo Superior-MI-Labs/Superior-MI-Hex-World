@@ -29,9 +29,9 @@ void main(){
     vec3 base=v_color;
     if(u_mode==1){
       base=materialColor(t.rgb,u_color_modes.x)*v_weights.x;
-      if(v_weights.y>0.0)base+=materialColor(texture(u_layer1,v_uv).rgb,u_color_modes.y)*v_weights.y;
-      if(v_weights.z>0.0)base+=materialColor(texture(u_layer2,v_uv).rgb,u_color_modes.z)*v_weights.z;
-      if(v_weights.w>0.0)base+=materialColor(texture(u_layer3,v_uv).rgb,u_color_modes.w)*v_weights.w;
+      base+=materialColor(texture(u_layer1,v_uv).rgb,u_color_modes.y)*v_weights.y;
+      base+=materialColor(texture(u_layer2,v_uv).rgb,u_color_modes.z)*v_weights.z;
+      base+=materialColor(texture(u_layer3,v_uv).rgb,u_color_modes.w)*v_weights.w;
     }
     float noise=noise2(v_mask_uv*u_mask_scale);
     if(u_mask_enabled)noise=mix(noise,texture(u_mask,v_mask_uv).r,.65);
@@ -70,6 +70,7 @@ export function createRenderer(canvas){
   }
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,64,64,0,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
+  for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}gl.activeTexture(gl.TEXTURE0);
   const mask=texture();let maskEnabled=false;
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,mask);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([128,128,128,255]));
@@ -140,6 +141,7 @@ export function createRenderer(canvas){
       const angle=(150+(f.edge??0)*60)*Math.PI/180;
       for(let i=0;i<3;i++){const [x,y,z]=f.points[i],a=f.attributes?.[i],uv=f.kind==="side"?[(x*Math.cos(angle)+y*Math.sin(angle))/repeat,z/repeat]:[x/repeat,y/repeat];pack(data,p[i],(a?.color??color).map(v=>v*shade),uv,a?.cover??f.cover,a?.rim??-1,[(x+Math.max(0,a?.rim??0)*.35)/5,(y+Math.max(0,a?.rim??0)*.5)/5],plan.weights[i],shade);}
     }
+    for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}gl.activeTexture(gl.TEXTURE0);
     for(const {role,keys,modes,data} of batchesTerrain.values()){
       const textures=keys.map(k=>style?(detailTextures.get(detailKey(role,k))??detailTextures.get(detailKey(role,null))??ground):ground);
       for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,textures[i]??ground);}

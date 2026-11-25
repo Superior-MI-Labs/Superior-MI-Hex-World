@@ -58,11 +58,17 @@ with sync_playwright() as p:
       const attr=materialWeights=>({color:[0,1,0],cover:[0,0,0],rim:-1,materialWeights});
       const face={kind:'top',material:'soil',points:[[0,0,1],[64,0,1],[0,64,1]],attributes:[attr([['soil',1]]),attr([['stone',1]]),attr([['soil',1]])]};
       r.render([face],view,{style});
-      return [r.readPixel(3,3),r.readPixel(31,3),r.readPixel(59,2)];
+      const gradient=[r.readPixel(3,3),r.readPixel(31,3),r.readPixel(59,2)];
+      r.setTerrainDetail("top",img("#00ff00"),"grass");r.setTerrainDetail("top",img("#ffffff"),"snow");
+      style.detail.materials.grass={top:"grass"};style.detail.materials.snow={top:"snow"};
+      const mixed=attr([["soil",.25],["stone",.25],["grass",.25],["snow",.25]]);
+      r.render([{...face,attributes:[mixed,mixed,mixed]}],view,{style});return {gradient,mixed:r.readPixel(10,10)};
     }""")
-    assert materials[0][0]>230 and materials[0][2]<25,materials
-    assert 105<materials[1][0]<150 and 105<materials[1][2]<150,materials
-    assert materials[2][2]>225 and materials[2][0]<30,materials
+    gradient=materials["gradient"]
+    assert gradient[0][0]>230 and gradient[0][2]<25,materials
+    assert 105<gradient[1][0]<150 and 105<gradient[1][2]<150,materials
+    assert gradient[2][2]>225 and gradient[2][0]<30,materials
+    assert all(120<v<136 for v in materials["mixed"][:3]),materials
     # Verify the coverage gradient and exact zero/full endpoints in actual GPU pixels.
     coverage=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');

@@ -6,7 +6,7 @@ import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle} from "./editor.
 import {project,pickFace,billboard,visibleTriangle} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
-import {fetchStyle,vegetationSamples,vegetationRaster} from "./art-style.mjs";
+import {fetchStyle,vegetationSamples,vegetationRaster,vegetationWind} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding} from "./entities.mjs";
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
@@ -299,8 +299,8 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     if(f.kind!=="top"||f.vegetation<=0)continue;
     if(styled){
       for(const sample of vegetationSamples(f,seed,art.profile,scale)){
-        const wind=windFor(f.address),season=climateFor(f.address).season,r=vegetationRaster(art,sample.variant,wind,season);if(!r)continue;animateRaster(r);if(art.seasonalRasters.get(season)?.has(sample.variant))seasonalFoliage++;else if(r!==art.vegetation.get(sample.variant))animatedFoliage++;
-        sprites.push({image:r.image,revision:r.revision,points:flex(billboard(sample.point,yaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot),sample.point,sample.height,contacts.length?cellContact(f.address):null,null,wind,art.profile.vegetation.wind?.[sample.variant])});
+        const wind=windFor(f.address),season=climateFor(f.address).season,r=vegetationRaster(art,sample.variant,wind,season);if(!r)continue;animateRaster(r);const seasonal=art.seasonalRasters.get(season)?.get(sample.variant);if(seasonal)seasonalFoliage++;if(r!==(seasonal??art.vegetation.get(sample.variant)))animatedFoliage++;
+        sprites.push({image:r.image,revision:r.revision,points:flex(billboard(sample.point,yaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot),sample.point,sample.height,contacts.length?cellContact(f.address):null,null,wind,vegetationWind(art.profile,sample.variant,season))});
       }
     }else if(stableUnit(seed,f.address,"tuft"+f.triangle)<=f.vegetation){
       const p=[0,1,2].map(i=>f.points.reduce((sum,v)=>sum+v[i]/3,0)),h=.55+f.vegetation*1.1;

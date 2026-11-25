@@ -18,7 +18,7 @@ export function resolveStyleProfile(profile,baseURL){
   s.detail.top=resolve(s.detail.top);s.detail.side=resolve(s.detail.side);
   for(const d of Object.values(s.detail.materials??{}))for(const role of ["top","side"])if(d[role]!==undefined)d[role]=resolve(d[role]);
   s.vegetation.assets=Object.fromEntries(Object.entries(s.vegetation.assets).map(([k,v])=>[k,resolve(v)]));
-  for(const entries of Object.values(s.vegetation.seasonal??{}))for(const [k,v] of Object.entries(entries))entries[k]=resolve(v);
+  for(const entries of Object.values(s.vegetation.seasonal??{}))for(const [k,v] of Object.entries(entries))entries[k]={...resolve(v),...(v.wind!==undefined?{wind:v.wind}:{})};
   return s;
 }
 export function validateStyle(s){
@@ -42,7 +42,7 @@ export function validateStyle(s){
   assert(v.seasonal===undefined||(v.seasonal&&typeof v.seasonal==="object"&&!Array.isArray(v.seasonal)),"Invalid seasonal bindings");
   for(const [season,entries] of Object.entries(v.seasonal??{})){
     assert(SEASONS.includes(season)&&entries&&typeof entries==="object"&&!Array.isArray(entries),"Invalid season");
-    for(const [k,b] of Object.entries(entries)){assert(own(v.assets,k),"Unknown seasonal variant");artBinding(b,s.manifest);}
+    for(const [k,b] of Object.entries(entries)){assert(own(v.assets,k),"Unknown seasonal variant");artBinding(b,s.manifest);if(b.wind!==undefined)out.vegetation.seasonal[season][k]={...b,wind:validateWindResponse(b.wind)};}
   }
   return out;
 }
@@ -65,18 +65,28 @@ export async function loadStyle(profile,{baseURL=location.href,openPack=openAtla
     const rasters={};await Promise.all(["top","side"].filter(role=>d[role]!==undefined).map(async role=>{rasters[role]=await load(d[role],true);}));
     materialRasters.set(material,rasters);
   }));
+  const seasonalWindRasters=new Map();
   await Promise.all(Object.entries(s.vegetation.seasonal??{}).map(async([season,bindings])=>{
-    seasonalRasters.set(season,new Map(await Promise.all(Object.entries(bindings).map(async([k,b])=>[k,await load(b)]))));
+    const winds=new Map();
+    const items=await Promise.all(Object.entries(bindings).map(async([k,b])=>{
+      if(b.wind?.states.length)winds.set(k,new Map(await Promise.all(b.wind.states.map(async({state})=>[state,await load({...b,state})]))));
+      return [k,await load(b)];
+    }));
+    seasonalRasters.set(season,new Map(items));seasonalWindRasters.set(season,winds);
   }));
-  return {profile:s,top,side,vegetation:new Map(entries),windRasters,materialRasters,seasonalRasters};
+  return {profile:s,top,side,vegetation:new Map(entries),windRasters,materialRasters,seasonalRasters,seasonalWindRasters};
 }
 export function vegetationRaster(style,variant,wind,season="summer"){
-  const seasonal=style.seasonalRasters?.get(season)?.get(variant);if(seasonal)return seasonal;
+  const seasonal=style.seasonalRasters?.get(season)?.get(variant);
+  if(seasonal){const b=style.profile.vegetation.seasonal[season][variant],state=windState(b.wind,wind,b.state??null);return style.seasonalWindRasters?.get(season)?.get(variant)?.get(state)??seasonal;}
   const binding=style.profile.vegetation.assets[variant],response=style.profile.vegetation.wind?.[variant];
   const state=windState(response,wind,binding?.state??null);
   return style.windRasters.get(variant)?.get(state)??style.vegetation.get(variant);
 }
 
+export function vegetationWind(profile,variant,season="summer"){
+  const b=profile.vegetation.seasonal?.[season]?.[variant];return b?.wind??profile.vegetation.wind?.[variant];
+}
 export function validateStyleVariants(profile,catalog){
   for(const v of catalog.vegetation.variants)assert(own(profile.vegetation.assets,v.id),"Missing vegetation binding: "+v.id);
   if(catalog.materials)for(const k of Object.keys(profile.detail.materials??{}))assert(own(catalog.materials,k),"Unknown material binding: "+k);

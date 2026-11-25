@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {validateStyle,vegetationSamples,resolveStyleProfile,loadStyle,fetchStyle,vegetationRaster,terrainTexturePlan} from "../src/art-style.mjs";
+import {validateStyle,vegetationSamples,resolveStyleProfile,loadStyle,fetchStyle,vegetationRaster,terrainTexturePlan,vegetationWind} from "../src/art-style.mjs";
 import {validateSpritePack} from "../src/assets.mjs";
 import {visibleTriangle} from "../src/camera.mjs";
 const profile=validateStyle(JSON.parse(readFileSync(new URL("../examples/meadow-style.json",import.meta.url))));
@@ -36,3 +36,5 @@ test("wind states share pack and use authored sequence only at sustained thresho
 
 test("material layers share static raster loading; seasonal overrides preserve fallback",async()=>{const calls=[],openPack=async()=>({createRaster(b){calls.push(b);return {binding:b,image:{},async update(){}};}});const s=await loadStyle(profile,{baseURL:"https://example.org/style.json",openPack});assert.equal(s.materialRasters.get("stone").top,s.side);assert.equal(vegetationRaster(s,"meadow-01",{velocity_ft_s:[20,0]},"autumn"),s.vegetation.get("meadow-03"));assert.equal(vegetationRaster(s,"meadow-03",{velocity_ft_s:[0,0]},"spring"),s.vegetation.get("meadow-03"));assert.throws(()=>validateStyle({...profile,vegetation:{...profile.vegetation,seasonal:{monsoon:{}}}}));});
 test("texture plan collapses unmapped materials and preserves weighted layers",()=>{const f={kind:"top",material:"soil",attributes:[{materialWeights:[["soil",1]]},{materialWeights:[["soil",.5],["stone",.5]]},{materialWeights:[["sand",.25],["soil",.25],["stone",.5]]}]};const p=terrainTexturePlan(f,profile);assert.deepEqual(p.keys,[null,"sand","stone"]);assert.deepEqual(p.weights,[[1,0,0,0],[.5,0,.5,0],[.25,.25,.5,0]]);assert.deepEqual(terrainTexturePlan(f,null).weights,[[1,0,0,0],[1,0,0,0],[1,0,0,0]]);});
+
+test("seasonal asset may independently declare wind state and flexibility",async()=>{const p=structuredClone(profile);p.vegetation.seasonal.winter["meadow-01"]={asset:"smi.hex.grass.states.fixture",state:"calm",wind:{bend:.2,states:[{min_speed_ft_s:5,state:"wind"}]}};const openPack=async()=>({createRaster(b){return {binding:b,image:{},async update(){}};}});const s=await loadStyle(p,{baseURL:"https://example.org/style.json",openPack});assert.equal(vegetationRaster(s,"meadow-01",{velocity_ft_s:[6,0]},"winter").binding.state,"wind");assert.equal(vegetationRaster(s,"meadow-01",{velocity_ft_s:[0,0]},"winter").binding.state,"calm");assert.equal(vegetationWind(s.profile,"meadow-01","winter").bend,.2);assert.equal(vegetationWind(s.profile,"meadow-01","autumn").bend,.42);});
