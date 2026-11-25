@@ -408,10 +408,10 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
   const shadowObjects=[];let scatterInstances=0;
   if(scatterDirty){
     scatterDirty=false;scatterPlan=[];
-    try{if(art?.scatter.size)scatterPlan=buildScatterPlan(world,domain,art.profile,{cache:meshCache});}
+    try{if(art?.scatter.size){scatterPlan=buildScatterPlan(world,domain,art.profile,{cache:meshCache});$("scatterStatus").textContent=art.scatter.size+" decorative families"+(art.scatterWarnings.length?"; "+art.scatterWarnings.join("; "):"");}}
     catch(e){$("scatterStatus").textContent=e.message;}
   }
-  const choices=styled&&$("scatter").checked?scatterPlan.filter(s=>s.address.every((v,i)=>v===selected[i])&&displayedAddress(s.address)):[];
+  const choices=styled&&$("scatter").checked?scatterPlan.filter(s=>s.address.every((v,i)=>v===selected[i])&&displayedAddress(s.address)&&scale>s.lod_px):[];
   const choiceKey=JSON.stringify(choices.map(s=>s.key));
   if(choiceKey!==scatterChoiceKey){scatterChoiceKey=choiceKey;const menu=$("scatterChoice"),old=menu.value;menu.replaceChildren(...choices.map(s=>new Option(s.family+" / "+s.variant,s.key)));if(choices.some(s=>s.key===old))menu.value=old;}
   scatterChoices=choices;$("promoteScatter").disabled=!choices.length;

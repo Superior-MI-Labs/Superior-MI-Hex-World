@@ -395,6 +395,33 @@ with sync_playwright() as p:
     page.locator("#cutaway").select_option("all")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cutaway===null")
     page.screenshot(path="/tmp/hex-world-qa.png",full_page=True)
+    # Fresh island, guaranteed visible scatter fixture. Explicit promotion must save
+    # an entity and suppress exactly one decorative sample, even after deletion.
+    page.goto("http://127.0.0.1:8000/")
+    page.wait_for_function("document.querySelector('#artStatus').textContent === 'Atlas meadow fixture loaded'")
+    promotion_style=json.loads(Path("examples/meadow-style.json").read_text())
+    promotion_style["id"]="promotion-browser-fixture"
+    family=promotion_style["vegetation"]["families"][0]
+    family["density"]=1
+    family["spacing_ft"]=0
+    promotion_style["vegetation"]["families"]=[family]
+    page.route("**/promotion-test.json",lambda route: route.fulfill(json=promotion_style))
+    page.locator("#artURL").fill("./examples/promotion-test.json")
+    page.locator("#loadArt").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='promotion-browser-fixture'")
+    page.wait_for_function("document.querySelector('#scatterChoice').options.length===6")
+    count=page.evaluate("JSON.parse(document.querySelector('#status').textContent).scatter_candidates")
+    key=page.locator("#scatterChoice").input_value()
+    page.locator("#promoteScatter").click()
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===2&&s.scatter_candidates===n-1}",arg=count)
+    with page.expect_download() as promoted:
+        page.locator("#save").click()
+    saved=json.loads(Path(promoted.value.path()).read_text())
+    assert len(saved["entities"])==2
+    assert any(key in c["value"].get("components",{}).get("scatter_hidden",[]) for chunk in saved["chunks"] for c in chunk["cells"])
+    page.locator("#objects").select_option(index=1)
+    page.locator("#removeObject").click()
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===1&&s.scatter_candidates===n-1}",arg=count)
     assert not errors,errors
-    print("GPU depth, Atlas sprite load, vertical construction and browser smoke passed")
+    print("GPU depth, Atlas sprite load, scatter promotion, vertical construction and browser smoke passed")
     browser.close()

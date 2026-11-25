@@ -1,7 +1,7 @@
 // Decoration is derived from real terrain, never from cutaway geometry or camera LOD.
 import {scatterSamples} from "./art-style.mjs";
 import {surface} from "./materials.mjs";
-import {physicalPosition} from "./core.mjs";
+import {physicalPosition,DIRECTIONS} from "./core.mjs";
 import {TerrainFaceCache} from "./terrain.mjs";
 const cellKey=a=>a.join(",");
 const identity=s=>JSON.stringify([s.address,s.key]);
@@ -28,16 +28,23 @@ export function buildScatterPlan(world,addresses,profile,{cache=new TerrainFaceC
   if(radius>8)throw Error("Scatter spacing exceeds supported grid neighborhood");
   const expanded=new Map(addresses.map(a=>[cellKey(a),a]));
   // Only boundary addresses need a halo; use actual known terrain and do not generate cells.
-  if(radius)for(const [q,r,z] of addresses)for(let x=-radius;x<=radius;x++)for(let y=Math.max(-radius,-x-radius);y<=Math.min(radius,-x+radius);y++){
+  if(radius)for(const [q,r,z] of addresses){
+    if(DIRECTIONS.every(([x,y])=>active.has(cellKey([q+x,r+y,z]))))continue;
+    for(let x=-radius;x<=radius;x++)for(let y=Math.max(-radius,-x-radius);y<=Math.min(radius,-x+radius);y++){
     const a=[q+x,r+y,z],k=cellKey(a);if(a.every(Number.isSafeInteger)&&!expanded.has(k))expanded.set(k,a);
+    }
   }
+  if(expanded.size>60000)throw Error("Scatter address budget exceeded; reduce active region");
   const candidates=[];
   for(const address of expanded.values()){
     const c=world.get(...address);if(!c||c.material==="air"||!families.some(f=>f.materials.includes(c.material)))continue;
     const hidden=new Set(c.components?.scatter_hidden??[]),state=surface(c.components?.surface);
     for(const f of cache.get(address)){
       if(f.kind!=="top")continue;
-      for(const s of scatterSamples({...f,surface:state},seed,profile,Infinity))candidates.push({...s,hidden:hidden.has(s.key)});
+      for(const s of scatterSamples({...f,surface:state},seed,profile,Infinity)){
+        if(candidates.length>=60000)throw Error("Scatter candidate budget exceeded; reduce density or active region");
+        candidates.push({...s,hidden:hidden.has(s.key)});
+      }
     }
   }
   return thinScatter(candidates).filter(s=>active.has(cellKey(s.address))&&!s.hidden);
