@@ -85,3 +85,6 @@ v0.32: staged painting strokes, grouped undo, reviewed JSON edit plans, qualifie
 
 
 v0.33: mixed terrain/object edit plans, reversible object placement and paint/erase, scoped build context, optional object assemblies.
+
+
+v0.34: reviewed road/river paths, grading, seeded multi-asset groves and journaled object properties.

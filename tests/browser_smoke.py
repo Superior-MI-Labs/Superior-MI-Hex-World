@@ -625,6 +625,16 @@ with sync_playwright() as p:
         page.locator("#exportBuildContext").click()
     context=json.loads(Path(ctx_download.value.path()).read_text())
     assert context["schema"]=="smi-hex-build-context/1" and len(context["assets"])==1
+    page.locator("#paintTool").select_option("select")
+    page.locator("summary",has_text="Procedural building tools").click()
+    page.locator("#usePalette").check()
+    page.locator("#previewGrove").click()
+    page.wait_for_function("document.querySelector('#planStatus').textContent.includes('Plant grove')")
+    page.locator("#discardEditPlan").click()
+    page.locator("#addWaypoint").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.waypoints===1")
+    page.locator("#clearWaypoints").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.waypoints===0")
     assert not errors,errors
-    print("GPU depth, Atlas sprite load, scatter promotion, multi-selection, keyboard camera, brush plan replay, object brush and context passed")
+    print("GPU depth, Atlas sprite load, scatter promotion, multi-selection, keyboard camera, brush plan replay, object brush, context and procedural controls passed")
     browser.close()
