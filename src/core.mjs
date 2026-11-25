@@ -58,6 +58,7 @@ export class World {
   getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
   putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);}
   removeEntity(id){return this.#entities.delete(id);}
+  relocateEntity(id,address){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const next=validateEntity({...old,address});requireThat(this.get(...next.address),"Unknown entity cell");this.#entities.set(id,next);}
   #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
   defineChunk(cq,cr,cz,defaultCell={material:"air",shape:uniformShape(0)}){
     const key=addressKey(cq,cr,cz);requireThat(!this.#chunks.has(key),"Chunk already defined");

@@ -18,6 +18,7 @@ void main(){
   if(u_mode==2){if(t.a<0.5)discard;color=vec4(t.rgb,1.0);}
   else if(u_mode==3){if(t.a<0.98)discard;color=vec4(t.rgb,1.0);}
   else if(u_mode==4){if(t.a<=0.02||t.a>=0.98)discard;color=t;}
+  else if(u_mode==5){if(any(lessThan(v_uv,vec2(0.0)))||any(greaterThan(v_uv,vec2(1.0))))discard;color=vec4(0.0,0.0,0.0,t.a*v_color.r);}
   else {
     vec3 base=v_color*(u_mode==1?mix(1.0,t.r,u_detail_strength):1.0);
     float noise=noise2(v_mask_uv*u_mask_scale);
@@ -75,6 +76,10 @@ export function createRenderer(canvas){
     gl.generateMipmap(gl.TEXTURE_2D);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
     detailTextures[kind]=tex;
   }
+  const shadowTexture=texture(),shadowPixels=new Uint8Array(64*64*4);
+  for(let y=0;y<64;y++)for(let x=0;x<64;x++){const d=Math.hypot((x+.5)/32-1,(y+.5)/32-1),a=Math.max(0,1-d*d);shadowPixels[(y*64+x)*4+3]=Math.round(255*a*a);}
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,64,64,0,gl.RGBA,gl.UNSIGNED_BYTE,shadowPixels);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   const spriteTextures=new Map();
   function spriteTexture(actor){
     let record=spriteTextures.get(actor.image);
@@ -83,7 +88,7 @@ export function createRenderer(canvas){
     return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/14);}
-  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,softSprites=false}={}){
+  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,softSprites=false,shadows=[]}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(uniforms.u_detail_strength,style?.detail.strength??.25);
     gl.uniform1i(uniforms.u_mask_enabled,maskEnabled?1:0);gl.uniform1i(uniforms.u_debug,debug?1:0);
@@ -110,6 +115,7 @@ export function createRenderer(canvas){
       for(let i=0;i<3;i++){const [x,y,z]=f.points[i],a=f.attributes?.[i],uv=f.kind==="side"?[(x*Math.cos(angle)+y*Math.sin(angle))/repeat,z/repeat]:[x/repeat,y/repeat];pack(data,p[i],(a?.color??color).map(v=>v*shade),uv,a?.cover??f.cover,a?.rim??-1,[(x+Math.max(0,a?.rim??0)*.35)/5,(y+Math.max(0,a?.rim??0)*.5)/5]);}
     }
     for(const role of ["top","side"])draw(batchesTerrain[role],style?(detailTextures[role]??ground):ground,pattern?1:0);
+    if(shadows.length&&!debug){const data=[];for(const f of shadows){const p=f.points.map(view);for(let i=0;i<3;i++)pack(data,p[i],[f.opacity,0,0],f.uv[i]);}gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,shadowTexture,5);gl.depthMask(true);gl.disable(gl.BLEND);}
     const batches=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
     for(const {actor,quad} of actors){used.add(actor.image);const tex=spriteTexture(actor),batch=batches.get(tex)??[];for(const i of [0,1,2,0,2,3])pack(batch,quad[i],[1,1,1],uv[i]);batches.set(tex,batch);}
     for(const [tex,batch] of batches)draw(batch,tex,softSprites?3:2);

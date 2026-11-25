@@ -9,11 +9,14 @@ import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
 import {loadStyle,vegetationSamples} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding} from "./entities.mjs";
+import {validateMovement,planObjectMove,moveObject} from "./navigation.mjs";
+import {contactShadows} from "./lighting.mjs";
 import {validatePrefab,planPrefab,placePrefab,capturePrefab} from "./prefabs.mjs";
 import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
 const base=await fetch("./examples/world.json").then(r=>{if(!r.ok)throw Error("World unavailable");return r.json()});
+const movement=validateMovement(await fetch("./examples/movement.json").then(r=>{if(!r.ok)throw Error("Movement profile unavailable");return r.json();}));
 const catalog=validateMaterials(await fetch("./examples/materials.json").then(r=>{if(!r.ok)throw Error("Materials unavailable");return r.json();}));
 let world,grid,clock=new Clock(base.simulation),yaw=0,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24,panX=0,panY=50,meshCache;
 const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
@@ -47,7 +50,15 @@ function prefabPlan(){
   const p=prefabCatalog.find(p=>p.id===prefabSelect.value),anchor=[selected[0],selected[1],selected[2]+Number($("prefabOffset").value)];
   return {p,anchor,turns:Number($("prefabRotation").value),plan:planPrefab(world,p,anchor,Number($("prefabRotation").value))};
 }
-let preview=null;
+let preview=null,routePreview=null;
+function syncMovement(){
+  const menu=$("movingObject"),old=menu.value,items=world.entities();
+  if([...menu.options].map(o=>o.value).join("|")!==items.map(e=>e.id).join("|")){menu.replaceChildren(...items.map(e=>new Option(e.id,e.id)));if(items.some(e=>e.id===old))menu.value=old;}
+  $("previewRoute").disabled=$("moveObject").disabled=!items.length;routePreview=null;$("routeStatus").textContent="";
+}
+$("movingObject").onchange=()=>{routePreview=null;$("routeStatus").textContent="";};
+function routeAction(commit){try{routePreview=(commit?moveObject:planObjectMove)(world,$("movingObject").value,[...selected],movement);$("routeStatus").textContent=routePreview.ok?(commit?"Moved: ":"Route: ")+(routePreview.path.length-1)+" steps":routePreview.reason;if(commit&&routePreview.ok)syncConstruction();}catch(e){$("routeStatus").textContent=e.message;routePreview=null;}}
+$("previewRoute").onclick=()=>routeAction(false);$("moveObject").onclick=()=>routeAction(true);
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function registerPrefab(p){if(prefabCatalog.some(x=>x.id===p.id))throw Error("Prefab ID already exists");prefabCatalog.push(p);prefabSelect.add(new Option(p.name,p.id));prefabSelect.value=p.id;syncConstruction();}
 $("captureCell").onclick=()=>{const c=world.get(...selected);if(!c||!hasVolume(c.shape)){$("message").textContent="Select a solid cell";return;}const k=selected.join(",");if(capture.has(k))capture.delete(k);else{if(!capture.size)captureAnchor=[...selected];capture.set(k,[...selected]);}if(!capture.size)captureAnchor=null;syncConstruction();};
@@ -63,6 +74,7 @@ function syncConstruction(){
   const menu=$("objects"),old=menu.value,items=world.entities().filter(e=>e.address.every((v,i)=>v===selected[i]));
   menu.replaceChildren(...items.map(e=>new Option(e.visual.asset+" · "+e.id,e.id)));if(items.some(e=>e.id===old))menu.value=old;
   $("removeObject").disabled=!items.length;
+  syncMovement();
 }
 for(const key of ["prefab","prefabRotation","prefabOffset"])$(key).onchange=syncConstruction;
 $("placePrefab").onclick=()=>{try{const {p,anchor,turns}=prefabPlan();if($("placePrefab").disabled)return;placePrefab(world,p,anchor,turns);dirty=true;sync();$("message").textContent=p.name+" placed";}catch(e){$("message").textContent=e.message;}};
@@ -205,7 +217,7 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
       sprites.push({image:tufts.get(f.variant),revision:0,points:billboard(p,yaw,h*.9,h)});
     }
   }
-  let objectInstances=0,unresolvedObjects=0;
+  let objectInstances=0,unresolvedObjects=0;const shadowObjects=[];
   if($("showActor").checked)for(const e of world.entities()){
     const h=anchorHeight(e,world.get(...e.address),grid);if(h===undefined){unresolvedObjects++;continue;}
     const o=physicalPosition(...e.address,grid),p=[o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h],screen=view(p);
@@ -214,8 +226,9 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     if(!s){unresolvedObjects++;continue;}
     s.update(clock.visual*1000).catch(err=>{entry.error=err.message;entry.sprite=null;});
     sprites.push({image:s.image,revision:s.revision,points:billboard(p,yaw,s.width,s.height,s.pivot)});objectInstances++;
+    if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address:e.address,point:p,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
   }
-  gpu.render(visible,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,softSprites:$("softSprites").checked});
+  gpu.render(visible,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,softSprites:$("softSprites").checked,shadows:$("contactShadows").checked?contactShadows(visible,shadowObjects):[]});
   if($("wire").checked){
     for(const a of domain){if(a[2]!==selected[2])continue;const p=projectLocal(a,[0,0,0]);if(p.x<-scale*5||p.x>canvas.width+scale*5||p.y<-scale*5||p.y>canvas.height+scale*5||hasVolume(world.get(...a).shape))continue;polygon(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)),null,"#344b56");}
 
@@ -224,6 +237,7 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
   const activeEffects=world.effects().filter(e=>effectActive(e.instance,clock.simulation));
   for(const e of activeEffects)drawFire(e.address);
   for(const a of world.burningAddresses())drawFire(a);
+  if(routePreview?.ok){ctx.beginPath();for(const [i,a] of routePreview.path.entries()){const s=world.get(...a).shape,p=projectLocal(a,[0,0,sampleSurface(s,grid,0,0)]);if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);}ctx.strokeStyle="#64e3dc";ctx.lineWidth=3;ctx.stroke();ctx.lineWidth=1;}
   for(const address of capture.values()){const c=world.get(...address);if(c&&hasVolume(c.shape))polygon(vertices(c.shape,grid).upper.slice(0,6).map(p=>projectLocal(address,p)),null,"#c59df5");}
   if($("previewPrefab").checked&&preview){
     for(const e of preview.edits){const v=vertices(e.value.shape,grid),blocked=preview.conflicts.some(c=>c.address.every((x,i)=>x===e.address[i])),color=blocked?"#f08072":"#88d9ed";
@@ -245,6 +259,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:exploration?"exploration":"island",resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:exploration?"exploration":"island",resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances,object_instances:objectInstances,world_objects:world.entityCount,route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

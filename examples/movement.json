@@ -1,0 +1,7 @@
+{
+  "schema": "smi-hex-movement/1",
+  "height_ft": 4,
+  "max_step_ft": 2.5,
+  "max_grade": 1,
+  "max_nodes": 512
+}

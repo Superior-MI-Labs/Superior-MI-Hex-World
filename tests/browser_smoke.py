@@ -35,6 +35,18 @@ with sync_playwright() as p:
     }""")
     assert 100<alpha["front"][0]<155 and 100<alpha["front"][1]<155,alpha
     assert alpha["behind"][0]<10 and alpha["behind"][1]>240,alpha
+    shadow=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs');
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const face={points:[[0,0,1],[64,0,1],[0,64,1]],kind:'top',color:[1,1,1]};
+      const s={points:face.points,uv:[[0,0],[2,0],[0,2]],opacity:.5};
+      r.render([face],view,{pattern:false,shadows:[s]});const dark=r.readPixel(16,16),clear=r.readPixel(3,3);
+      const cover={...face,points:face.points.map(([x,y])=>[x,y,2]),color:[0,1,0]};
+      r.render([face,cover],view,{pattern:false,shadows:[s]});return {dark,clear,hidden:r.readPixel(16,16)};
+    }""")
+    assert 110<shadow["dark"][0]<150 and shadow["clear"][0]>240,shadow
+    assert shadow["hidden"][1]>240 and shadow["hidden"][0]<10,shadow
     # Verify the coverage gradient and exact zero/full endpoints in actual GPU pixels.
     coverage=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -175,6 +187,24 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).active_effects===1")
     page.locator("#extinguish").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_effects===0")
+    # New island: choose a neighboring floor through the actual renderer and move.
+    page.get_by_role("button",name="Reset terrain").click()
+    page.locator("#movingObject").select_option("demo-actor")
+    xy=page.evaluate("""async () => {
+      const {project}=await import('/src/camera.mjs');
+      return project([5,0,5]);
+    }""")
+    box=page.locator("#scene").bounding_box()
+    page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='1,0,0'")
+    page.locator("#previewRoute").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).route_steps===1")
+    page.locator("#moveObject").click()
+    with page.expect_download() as moved:
+        page.locator("#save").click()
+    assert json.loads(Path(moved.value.path()).read_text())["entities"][0]["address"]==[1,0,0]
+    page.locator("#contactShadows").uncheck()
+    page.locator("#contactShadows").check()
     page.screenshot(path="/tmp/hex-world-qa.png",full_page=True)
     assert not errors,errors
     print("GPU depth, Atlas sprite load, vertical construction and browser smoke passed")
