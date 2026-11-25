@@ -2,6 +2,7 @@ import {vertices,EDGE_NEIGHBORS,oppositeEdge} from "./geometry.mjs";
 import {physicalPosition,validateCell} from "./core.mjs";
 import {surface,withSurface} from "./materials.mjs";
 import {validateWater} from "./environment.mjs";
+import {validateEntity,anchorHeight} from "./entities.mjs";
 // Logical editable faces are not render triangles. A clipped side still
 // exposes its owning cell's four original control vertices.
 export function faceKey(face){
@@ -74,18 +75,20 @@ export class CellEditHistory{
   get canUndo(){return !!this.#undo.length;}
   get canRedo(){return !!this.#redo.length;}
   get counts(){return {undo:this.#undo.length,redo:this.#redo.length};}
-  apply(edits,label="Cell edit",group=null){
+  apply(edits,label="Cell edit",group=null,entities=[]){
     if(!Array.isArray(edits)||edits.length>4096)throw Error("Editor command exceeds cell budget");
     const seen=new Set(),before=edits.map(({address})=>{
       const key=address.join(",");if(seen.has(key))throw Error("Duplicate command address");seen.add(key);
       const value=this.#world.get(...address);if(!value)throw Error("Unknown command cell");return {address:[...address],value};
     });
-    this.#world.apply(edits);
+    const entityBefore=entities.map(({id})=>({id,value:this.#world.getEntity(id)??null}));
+    this.#world.apply(edits,entities);
+    const entityAfter=entityBefore.map(({id})=>({id,value:this.#world.getEntity(id)??null})),objectChanged=entityBefore.map((v,i)=>!sameCell(v.value,entityAfter[i].value));
     const after=before.map(({address})=>({address,value:this.#world.get(...address)}));
     const changed=before.map((v,i)=>!sameCell(v.value,after[i].value));
-    if(!changed.some(Boolean))return false;
-    const entry={label,group,before:before.filter((_,i)=>changed[i]),after:after.filter((_,i)=>changed[i])},previous=this.#undo.at(-1);
-    if(group&&previous?.group===group&&!this.#redo.length){
+    if(!changed.some(Boolean)&&!objectChanged.some(Boolean))return false;
+    const entry={label,group,before:before.filter((_,i)=>changed[i]),after:after.filter((_,i)=>changed[i]),entityBefore:entityBefore.filter((_,i)=>objectChanged[i]),entityAfter:entityAfter.filter((_,i)=>objectChanged[i])},previous=this.#undo.at(-1);
+    if(group&&previous?.group===group&&!this.#redo.length&&!entry.entityBefore.length&&!previous.entityBefore.length){
       const first=new Map(previous.before.map(v=>[v.address.join(","),v])),last=new Map(previous.after.map(v=>[v.address.join(","),v]));
       // Only merge contiguous edits; external changes break the gesture.
       if(entry.before.every(v=>!last.has(v.address.join(","))||sameCell(last.get(v.address.join(",")).value,v.value))&&new Set([...first.keys(),...entry.before.map(v=>v.address.join(","))]).size<=4096){
@@ -105,9 +108,11 @@ export class CellEditHistory{
     // Simulation or another tool may have changed these cells since editing.
     // Refuse stale history rather than silently overwrite authoritative state.
     if(expected.some(e=>!sameCell(this.#world.get(...e.address),e.value)))throw Error("History conflict: cell changed since command");
-    this.#world.apply(desired);source.pop();target.push(command);return command.label;
+    const objectExpected=reverse?command.entityAfter:command.entityBefore,objectDesired=reverse?command.entityBefore:command.entityAfter;
+    if(objectExpected.some(e=>!sameCell(this.#world.getEntity(e.id)??null,e.value)))throw Error("History conflict: object changed since command");
+    this.#world.apply(desired,objectDesired);source.pop();target.push(command);return command.label;
   }
-  latestPlan(){const c=this.#undo.at(-1);return c?{schema:"smi-hex-edit-plan/1",world_id:this.#world.config.id,label:c.label,edits:c.before.map((v,i)=>({address:v.address,expected:v.value,value:c.after[i].value}))}:null;}
+  latestPlan(){const c=this.#undo.at(-1);return c?structuredClone({schema:"smi-hex-edit-plan/1",world_id:this.#world.config.id,label:c.label,edits:c.before.map((v,i)=>({address:v.address,expected:v.value,value:c.after[i].value})),...(c.entityBefore.length?{entities:c.entityBefore.map((v,i)=>({id:v.id,expected:v.value,value:c.entityAfter[i].value}))}:{})}):null;}
   undo(){return this.#replay(this.#undo,this.#redo,true);}
   redo(){return this.#replay(this.#redo,this.#undo,false);}
 }
@@ -119,8 +124,8 @@ function sameCell(a,b){
   if(!a||!b||typeof a!=="object"||typeof b!=="object"||Array.isArray(a)!==Array.isArray(b))return false;
   const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(k=>Object.hasOwn(b,k)&&sameCell(a[k],b[k]));
 }
-export function makeEditPlan(world,edits,label="Cell edit"){
-  return inspectEditPlan(world,{schema:"smi-hex-edit-plan/1",world_id:world.config.id,label,edits:edits.map(e=>({...e,expected:world.get(...e.address)}))}).plan;
+export function makeEditPlan(world,edits,label="Cell edit",entities=[]){
+  return inspectEditPlan(world,{schema:"smi-hex-edit-plan/1",world_id:world.config.id,label,edits:edits.map(e=>({...e,expected:world.get(...e.address)})),entities:entities.map(e=>({...e,expected:world.getEntity(e.id)??null}))}).plan;
 }
 export function inspectEditPlan(world,raw){
   if(raw?.schema!=="smi-hex-edit-plan/1"||raw.world_id!==world.config.id||typeof raw.label!=="string"||raw.label.length>128||!Array.isArray(raw.edits)||raw.edits.length>4096)throw Error("Invalid or incompatible edit plan");
@@ -132,12 +137,27 @@ export function inspectEditPlan(world,raw){
     if(!actual||!sameCell(actual,expected))conflicts.push({address,reason:actual?"changed":"unknown"});
     return {address,expected,value};
   });
-  return {plan:{schema:raw.schema,world_id:raw.world_id,label:raw.label,edits},conflicts};
+  if(raw.entities!==undefined&&(!Array.isArray(raw.entities)||raw.entities.length>512))throw Error("Invalid plan entities");
+  const pending=new Map(edits.map(e=>[e.address.join(","),e.value])),ids=new Set();
+  const entities=(raw.entities??[]).map(e=>{
+    if(typeof e?.id!=="string"||!e.id||e.id.length>200||ids.has(e.id))throw Error("Invalid or duplicate plan entity ID");ids.add(e.id);
+    const expected=e.expected===null?null:validateEntity(e.expected),value=e.value===null?null:validateEntity(e.value);
+    if(expected&&expected.id!==e.id||value&&value.id!==e.id)throw Error("Entity ID mismatch");
+    const actual=world.getEntity(e.id)??null;
+    if(!sameCell(actual,expected))conflicts.push({id:e.id,address:(value??actual??expected)?.address,reason:"object changed"});
+    if(value){
+      const support=pending.get(value.address.join(","))??world.get(...value.address);
+      const placement=!actual||!sameCell(actual.address,value.address)||actual.anchor!==value.anchor||!sameCell(actual.offset_ft,value.offset_ft);
+      if(!support||placement&&anchorHeight(value,support,world.config.grid)===undefined)conflicts.push({id:e.id,address:value.address,reason:"unsupported object"});
+    }
+    return {id:e.id,expected,value};
+  });
+  return {plan:{schema:raw.schema,world_id:raw.world_id,label:raw.label,edits,...(entities.length?{entities}:{})},conflicts};
 }
 export function applyEditPlan(world,history,raw){
   const {plan,conflicts}=inspectEditPlan(world,raw);
-  if(conflicts.length)throw Error("Edit plan blocked: "+conflicts[0].reason+" at "+conflicts[0].address.join(","));
-  return history.apply(plan.edits,plan.label);
+  if(conflicts.length)throw Error("Edit plan blocked: "+conflicts[0].reason+" at "+(conflicts[0].address?.join(",")??conflicts[0].id));
+  return history.apply(plan.edits,plan.label,null,plan.entities??[]);
 }
 // These transforms are shared by the ordinary controls and brush planner.
 export function cellShape(cell,shape,material){
@@ -161,4 +181,11 @@ export function hexStroke(from,to){
     if(da>db&&da>dc)a=-b-c;else if(db>dc)b=-a-c;
     return [a,b,from[2]];
   });
+}
+
+export function exportBuildContext(world,addresses,bindings=[]){
+  if(!Array.isArray(addresses)||addresses.length>MAX_SELECTION||bindings.length>24)throw Error("Context exceeds limit");
+  const cells=[],seen=new Set();
+  for(const address of addresses){const k=address.join(",");if(seen.has(k))continue;seen.add(k);const value=world.get(...address);if(value)cells.push({address:[...address],value});}
+  return {schema:"smi-hex-build-context/1",world_id:world.config.id,grid:world.config.grid,environment:world.environment,cells,entities:world.entities().filter(e=>seen.has(e.address.join(","))),assets:structuredClone(bindings)};
 }

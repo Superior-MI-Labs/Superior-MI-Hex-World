@@ -82,3 +82,6 @@ v0.31: bounded reversible cell commands, selection brushes, shared vertex/prefab
 
 
 v0.32: staged painting strokes, grouped undo, reviewed JSON edit plans, qualified asset palette and foliage render presets.
+
+
+v0.33: mixed terrain/object edit plans, reversible object placement and paint/erase, scoped build context, optional object assemblies.

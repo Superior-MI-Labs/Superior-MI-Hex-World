@@ -610,6 +610,21 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===1")
     page.locator("#renderQuality").select_option("fast")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.quality==='fast'")
+    page.locator("#paintTool").select_option("objects")
+    page.locator("#objectDensity").fill("1")
+    scene.scroll_into_view_if_needed()
+    box=scene.bounding_box()
+    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return project([5,0,2.5]);}""")
+    page.mouse.click(*screen(xy))
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===2")
+    page.locator("#undoEdit").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===1")
+    page.locator("#redoEdit").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===2")
+    with page.expect_download() as ctx_download:
+        page.locator("#exportBuildContext").click()
+    context=json.loads(Path(ctx_download.value.path()).read_text())
+    assert context["schema"]=="smi-hex-build-context/1" and len(context["assets"])==1
     assert not errors,errors
-    print("GPU depth, Atlas sprite load, scatter promotion, multi-selection, keyboard camera, brush plan replay and palette passed")
+    print("GPU depth, Atlas sprite load, scatter promotion, multi-selection, keyboard camera, brush plan replay, object brush and context passed")
     browser.close()

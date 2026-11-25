@@ -105,8 +105,15 @@ export class World {
   get(q,r,z){const [key,local]=this.#location(q,r,z),chunk=this.#chunks.get(key);return chunk ? copy(chunk.cells.get(local)??chunk.defaultCell):undefined;}
   geometryRevisionAt(q,r,z){const [key]=this.#location(q,r,z);return this.#chunks.get(key)?.geometryRevision??null;}
   set(q,r,z,value){this.apply([{address:[q,r,z],value}]);}
-  apply(edits){
+  apply(edits,entities=[]){
     const pending=edits.map(({address,value})=>{requireThat(Array.isArray(address)&&address.length===3&&address.every(int),"Invalid edit address");const [key,local]=this.#location(...address),chunk=this.#chunks.get(key);requireThat(chunk,"Unknown chunk");return {chunk,local,key:addressKey(...address),value:validateCell(value,this.#config.grid.geometry_subdivisions)};});
+    requireThat(Array.isArray(entities)&&entities.length<=512,"Invalid entity batch");
+    const ids=new Set(),objects=entities.map(({id,value})=>{
+      requireThat(typeof id==="string"&&id.length>0&&id.length<=200&&!ids.has(id),"Invalid or duplicate entity edit ID");ids.add(id);
+      const old=this.#entities.get(id),next=value===null?null:validateEntity(value);
+      requireThat(!next||next.id===id&&this.get(...next.address),"Invalid entity edit target");
+      return {id,old,next};
+    });
     const changed=new Set();
     for(const {chunk,local,key,value} of pending){
       const old=chunk.cells.get(local)??chunk.defaultCell;
@@ -116,6 +123,7 @@ export class World {
       if(value.components?.water?.fill>0)this.#wet.add(key);else this.#wet.delete(key);
     }
     for(const chunk of changed)chunk.geometryRevision=++this.#revision;
+    for(const {id,old,next} of objects){if(next)this.#entities.set(id,next);else this.#entities.delete(id);if(old?.collider||next?.collider)this.#collisionRevision++;}
   }
   *burningAddresses(){yield* this.#componentAddresses(this.#burning,this.#burningDefaults);}
   *waterAddresses(){yield* this.#componentAddresses(this.#wet,this.#wetDefaults);}
