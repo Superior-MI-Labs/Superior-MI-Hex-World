@@ -58,3 +58,6 @@ v0.23: stable same-level scatter spacing and explicit persistent object promotio
 
 
 v0.24: explicit persistent cylindrical object colliders, swept walking queries and collider editor diagnostics.
+
+
+v0.25: indexed object collision queries and explicit host conditions bound to canonical Atlas inputs.

@@ -7,10 +7,10 @@ import {project,pickFace,billboard,visibleTriangle} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
 import {ATLAS_CATALOG,fetchCatalog,searchCatalog} from "./catalog.mjs";
-import {appearanceOptions,dispatchAppearance} from "./asset-interactions.mjs";
+import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
 import {fetchStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
-import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection} from "./entities.mjs";
+import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection,colliderActive,validateCollider} from "./entities.mjs";
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
 import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
 import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettlement} from "./settlement.mjs";
@@ -111,11 +111,11 @@ async function useSelected(targetId=null){
         }
       }
       response=dispatchAppearance(contract,visualSelection(e.visual),"use");
-      if(response){const {inputs,slots,preset,...base}=e.visual;await qualifyBinding({...base,...response.selection});}
-      if(world!==owner||!owner.getEntity(targetId)||visualKey(owner.getEntity(targetId).visual)!==visualKey(e.visual))return;
+      if(response){response.selection=collisionSelection(contract,response.selection,e.collider);const {inputs,slots,preset,...base}=e.visual;await qualifyBinding({...base,...response.selection});}
+      if(world!==owner||JSON.stringify(owner.getEntity(targetId))!==JSON.stringify(e))return;
       result=interactObject(owner,actorId,address,movement,interactions,targetId);
       if(!result.ok){$("interactionStatus").textContent=result.reason;return;}
-      if(response){owner.setEntityAppearance(targetId,response.selection);syncAppearance();}
+      if(response){owner.setEntityAppearance(targetId,response.selection);syncCollider();syncAppearance();}
     }
     showEvents(result.events);
     if(response)$("interactionStatus").textContent+="; visual use applied"+(response.events.length?": "+response.events.map(x=>x.name).join(", "):"");
@@ -176,8 +176,27 @@ function syncConstruction(){
 for(const key of ["prefab","prefabRotation","prefabOffset"])$(key).onchange=syncConstruction;
 $("placePrefab").onclick=()=>{try{const {p,anchor,turns}=prefabPlan();if($("placePrefab").disabled)return;placePrefab(world,p,anchor,turns);dirty=true;sync();$("message").textContent=p.name+" placed";}catch(e){$("message").textContent=e.message;}};
 $("objects").onchange=()=>{const e=world.getEntity($("objects").value);$("objectTags").value=e?.interaction_tags?.join(", ")??"";$("objectOrientation").textContent=e?((e.orientation_steps??0)*60)+"°":"No object";syncCollider();syncAppearance();};
-function syncCollider(){const e=world.getEntity($("objects").value),c=e?.collider;$("applyCollider").disabled=!e;$("colliderRadius").value=c?.radius_ft??0;$("colliderHeight").value=c?.height_ft??4;}
-$("applyCollider").onclick=()=>{try{const id=$("objects").value,r=Number($("colliderRadius").value),h=Number($("colliderHeight").value);world.setEntityCollider(id,r===0?null:{kind:"cylinder",radius_ft:r,height_ft:h});syncConstruction();$("colliderStatus").textContent=r===0?"Collider removed":"Collider applied";}catch(e){$("colliderStatus").textContent=e.message;}};
+function syncCollider(){
+  const e=world.getEntity($("objects").value),c=e?.collider,d=c?.disabled_when;
+  $("applyCollider").disabled=!e;$("colliderRadius").value=c?.radius_ft??0;$("colliderHeight").value=c?.height_ft??4;
+  $("colliderInput").value=d?.input??"";$("colliderEquals").value=d?JSON.stringify(d.equals):"true";
+  $("colliderActive").textContent=c?(colliderActive(e)?"Blocking":"Disabled by input"):"No collider";
+}
+$("applyCollider").onclick=async()=>{
+  const id=$("objects").value,owner=world,e=world.getEntity(id);if(!e)return;
+  const request=++appearanceRequest;
+  try{
+    const r=Number($("colliderRadius").value),h=Number($("colliderHeight").value),input=$("colliderInput").value.trim();
+    const c=r===0?null:validateCollider({kind:"cylinder",radius_ft:r,height_ft:h,...(input?{disabled_when:{input,equals:JSON.parse($("colliderEquals").value)}}:{})});
+    let selection=null;
+    if(c?.disabled_when){
+      const {next}=await qualifyBinding(e.visual);selection=collisionSelection(next.contract,visualSelection(e.visual),c);
+      const {inputs,slots,preset,...base}=e.visual;await qualifyBinding({...base,...selection});
+    }
+    if(request!==appearanceRequest||world!==owner||JSON.stringify(owner.getEntity(id))!==JSON.stringify(e))return;
+    world.setEntityCollider(id,c,selection);syncConstruction();$("colliderStatus").textContent=r===0?"Collider removed":"Collider applied";
+  }catch(err){if(request===appearanceRequest)$("colliderStatus").textContent=err.message;}
+};
 $("rotateObject").onclick=()=>{const e=world.getEntity($("objects").value);if(e){world.setEntityOrientation(e.id,((e.orientation_steps??0)+1)%6);syncConstruction();}};
 $("removeObject").onclick=()=>{playback.delete($("objects").value);world.removeEntity($("objects").value);syncConstruction();};
 
@@ -255,11 +274,12 @@ $("loadCatalogAsset").onclick=()=>{const a=catalogMatches[Number($("catalogAsset
 $("applyAppearance").onclick=async()=>{
   const id=$("objects").value,e=world.getEntity(id),request=++appearanceRequest,owner=world;if(!e)return;
   try{const text=$("objectAppearance").value; if(text.length>32000)throw Error("Selection too large");
-    const selection=visualSelection(JSON.parse(text)),{preset,inputs,slots,...base}=e.visual;
+    let selection=visualSelection(JSON.parse(text));const {preset,inputs,slots,...base}=e.visual;
     $("appearanceStatus").textContent="Checking selected views";
-    await qualifyBinding({...base,...selection});
-    if(request!==appearanceRequest||world!==owner||!world.getEntity(id)||visualKey(world.getEntity(id).visual)!==visualKey(e.visual))return;
-    world.setEntityAppearance(id,selection);appearanceKey=null;syncAppearance();$("appearanceStatus").textContent="Appearance applied";
+    const {next}=await qualifyBinding({...base,...selection});
+    if(e.collider?.disabled_when){selection=collisionSelection(next.contract,selection,e.collider);await qualifyBinding({...base,...selection});}
+    if(request!==appearanceRequest||world!==owner||JSON.stringify(world.getEntity(id))!==JSON.stringify(e))return;
+    world.setEntityAppearance(id,selection);appearanceKey=null;syncCollider();syncAppearance();$("appearanceStatus").textContent="Appearance applied";
   }catch(err){if(request===appearanceRequest)$("appearanceStatus").textContent=err.message;}
 };
 $("loadChest").onclick=()=>loadBinding({manifest:"./examples/chest-fixture/manifest.json",asset:"fixture.chest",height_ft:3,preset:"closed"});

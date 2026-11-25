@@ -2,7 +2,7 @@
 import {physicalPosition} from "./core.mjs";
 import {validAddress,anchorHeight} from "./entities.mjs";
 import {routeInteractions,useInteraction} from "./interactions.mjs";
-import {objectVolumes,firstObjectBlock} from "./collision.mjs";
+import {collisionQuery,firstObjectBlock} from "./collision.mjs";
 import {EDGE_NEIGHBORS,oppositeEdge,vertices,sampleSurface} from "./geometry.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const EPS=1e-8;
@@ -70,7 +70,7 @@ function standing(world,g,address,p,volumes){
   const point=worldPoint(address,s.points[0],s.feet[0],g),block=firstObjectBlock(volumes,point,point,p);
   return block?{ok:false,reason:"blocked object",object_id:block}:{ok:true,height_ft:s.feet[0]};
 }
-export function standability(world,address,profile,{exclude=[]}={}){return standing(world,world.config.grid,address,validateMovement(profile),objectVolumes(world,{exclude}));}
+export function standability(world,address,profile,{exclude=[]}={}){return standing(world,world.config.grid,address,validateMovement(profile),collisionQuery(world,{exclude}));}
 function step(world,g,from,to,p,volumes){
   const e=EDGE_NEIGHBORS.findIndex(([q,r])=>from[0]+q===to[0]&&from[1]+r===to[1]);
   if(e<0)return {ok:false,reason:"not a horizontal neighbor"};
@@ -90,13 +90,13 @@ function step(world,g,from,to,p,volumes){
 }
 export function walkStep(world,from,to,profile,{exclude=[]}={}){
   assert(validAddress(from)&&validAddress(to),"Invalid walking address");
-  return step(world,world.config.grid,from,to,validateMovement(profile),objectVolumes(world,{exclude}));
+  return step(world,world.config.grid,from,to,validateMovement(profile),collisionQuery(world,{exclude}));
 }
 // Breadth-first search minimizes cell steps. Unknown regions are not traversable.
 export function findRoute(world,from,to,profile,{exclude=[]}={}){
   assert(validAddress(from)&&validAddress(to),"Invalid route address");
   const p=validateMovement(profile),g=world.config.grid;
-  const volumes=objectVolumes(world,{exclude}),start=standing(world,g,from,p,volumes),end=standing(world,g,to,p,volumes);
+  const volumes=collisionQuery(world,{exclude}),start=standing(world,g,from,p,volumes),end=standing(world,g,to,p,volumes);
   if(!start.ok||!end.ok)return {ok:false,reason:!start.ok?"Start: "+start.reason:"Destination: "+end.reason,visited:0,path:[]};
   const queue=[from],previous=new Map([[key(from),null]]),target=key(to);
   const levels=Math.ceil(p.max_step_ft/g.vertical_ft)+1;
@@ -132,7 +132,7 @@ export function interactObject(world,id,address,profile,interactions,targetId=nu
   assert(actor.anchor==="surface"&&actor.offset_ft.every(v=>v===0),"Interaction requires centered surface actor");
   const p=validateMovement(profile),g=world.config.grid;
   const same=actor.address.every((v,i)=>v===address[i]);
-  const volumes=objectVolumes(world,{exclude:targetId?[id,targetId]:[id]});
+  const volumes=collisionQuery(world,{exclude:targetId?[id,targetId]:[id]});
   const reachable=same?standing(world,g,address,p,volumes):step(world,g,actor.address,address,p,volumes);
   if(!reachable.ok)return {ok:false,reason:"Target outside reachable interaction range",events:[]};
   return {ok:true,events:[useInteraction(world,id,address,interactions,targetId)]};
@@ -149,7 +149,7 @@ export function routeWaypoints(world,path,profile,{exclude=[]}={}){
     if(last&&last.address.every((v,i)=>v===address[i])&&Math.hypot(...point.map((v,i)=>v-last.point[i]))<EPS)return;
     out.push({address:[...address],point});
   }
-  const volumes=objectVolumes(world,{exclude}),first=standing(world,g,path[0],p,volumes);assert(first.ok,"Invalid route support");add(path[0],[0,0],first.height_ft);
+  const volumes=collisionQuery(world,{exclude}),first=standing(world,g,path[0],p,volumes);assert(first.ok,"Invalid route support");add(path[0],[0,0],first.height_ft);
   for(let i=1;i<path.length;i++){
     const a=path[i-1],b=path[i];assert(step(world,g,a,b,p,volumes).ok,"Route is no longer traversable");
     const e=EDGE_NEIGHBORS.findIndex(([q,r])=>a[0]+q===b[0]&&a[1]+r===b[1]),sa=support(world,g,a,e),sb=support(world,g,b,oppositeEdge(e));

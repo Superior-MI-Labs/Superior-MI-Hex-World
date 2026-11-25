@@ -1,6 +1,6 @@
 import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
-import {validateEntity,validAddress,visualSelection,anchorHeight} from "./entities.mjs";
+import {validateEntity,validAddress,visualSelection,anchorHeight,colliderActive} from "./entities.mjs";
 import {interactionTags} from "./interactions.mjs";
 import {validateEnvironment} from "./environment.mjs";
 export {shape} from "./geometry.mjs";
@@ -68,7 +68,14 @@ export class World {
   getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
   putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);if(e.collider)this.#collisionRevision++;}
   removeEntity(id){const old=this.#entities.get(id),removed=this.#entities.delete(id);if(old?.collider)this.#collisionRevision++;return removed;}
-  setEntityCollider(id,collider){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const {collider:previous,...rest}=old,next=validateEntity(collider===null?rest:{...rest,collider});this.#entities.set(id,next);if(JSON.stringify(previous)!==JSON.stringify(next.collider))this.#collisionRevision++;}
+  setEntityCollider(id,collider,selection=null){
+    const old=this.#entities.get(id);requireThat(old,"Unknown entity");
+    const {collider:previous,...rest}=old,{inputs,slots,preset,...base}=old.visual;
+    const visual=selection===null?old.visual:{...base,...visualSelection(selection)};
+    const next=validateEntity({...rest,visual,...(collider===null?{}:{collider})});
+    this.#entities.set(id,next);
+    if(JSON.stringify(previous)!==JSON.stringify(next.collider)||colliderActive(old)!==colliderActive(next))this.#collisionRevision++;
+  }
   promoteScatter(key,value){
     const e=validateEntity(value),c=this.get(...e.address);requireThat(c&&e.anchor==="surface"&&anchorHeight(e,c,this.#config.grid)!==undefined,"Scatter needs supporting terrain");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");
     const hidden=c.components?.scatter_hidden??[];requireThat(!hidden.includes(key),"Scatter already promoted");
@@ -79,7 +86,8 @@ export class World {
   setEntityAppearance(id,selection){
     const e=this.#entities.get(id);requireThat(e,"Unknown entity");
     const {inputs,slots,preset,...visual}=e.visual;
-    this.#entities.set(id,validateEntity({...e,visual:{...visual,...visualSelection(selection)}}));
+    const next=validateEntity({...e,visual:{...visual,...visualSelection(selection)}});this.#entities.set(id,next);
+    if(colliderActive(e)!==colliderActive(next))this.#collisionRevision++;
   }
   setEntityOrientation(id,orientation_steps){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,orientation_steps}));}
   setEntityTags(id,tags){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,interaction_tags:tags}));}

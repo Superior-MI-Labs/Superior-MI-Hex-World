@@ -35,7 +35,19 @@ export function spriteBinding(b){
 // Physical geometry belongs to the host, independent of sprite dimensions.
 export function validateCollider(c){
   assert(c&&c.kind==="cylinder"&&Number.isFinite(c.radius_ft)&&c.radius_ft>=.05&&c.radius_ft<=20&&Number.isFinite(c.height_ft)&&c.height_ft>=.05&&c.height_ft<=100,"Invalid object collider");
-  return {kind:"cylinder",radius_ft:c.radius_ft,height_ft:c.height_ft};
+  const out={kind:"cylinder",radius_ft:c.radius_ft,height_ft:c.height_ft};
+  if(c.disabled_when!==undefined){
+    const d=c.disabled_when;
+    assert(d&&id(d.input)&&!["__proto__","constructor","prototype"].includes(d.input)&&(typeof d.equals==="boolean"||typeof d.equals==="number"&&Number.isFinite(d.equals)||id(d.equals)),"Invalid collider condition");
+    out.disabled_when={input:d.input,equals:d.equals};
+  }
+  return out;
+}
+// A condition uses only an explicitly materialized canonical visual input.
+export function colliderActive(e){
+  if(!e.collider)return false;
+  const d=e.collider.disabled_when;
+  return !d||!own(e.visual.inputs??{},d.input)||e.visual.inputs[d.input]!==d.equals;
 }
 export function validateEntity(e){
   assert(e&&id(e.id)&&validAddress(e.address),"Invalid entity");
@@ -44,7 +56,9 @@ export function validateEntity(e){
   assert(Array.isArray(offset)&&offset.length===3&&offset.every(v=>Number.isFinite(v)&&Math.abs(v)<=100),"Invalid entity offset");
   assert(e.orientation_steps===undefined||(Number.isInteger(e.orientation_steps)&&e.orientation_steps>=0&&e.orientation_steps<6),"Invalid object orientation");
   const collider=e.collider===undefined?{}:{collider:validateCollider(e.collider)};
-  return {...structuredClone(e),...collider,address:[...e.address],offset_ft:[...offset],...(e.orientation_steps!==undefined?{orientation_steps:e.orientation_steps}:{}),visual:spriteBinding(e.visual),...(e.interaction_tags!==undefined?{interaction_tags:interactionTags(e.interaction_tags)}:{})};
+  const visual=spriteBinding(e.visual),d=collider.collider?.disabled_when;
+  if(d)assert(own(visual.inputs??{},d.input)&&typeof visual.inputs[d.input]===typeof d.equals,"Conditional collider requires explicit matching-type visual input");
+  return {...structuredClone(e),...collider,address:[...e.address],offset_ft:[...offset],...(e.orientation_steps!==undefined?{orientation_steps:e.orientation_steps}:{}),visual,...(e.interaction_tags!==undefined?{interaction_tags:interactionTags(e.interaction_tags)}:{})};
 }
 // Surface anchored objects follow terrain edits; if their support is removed,
 // they remain saved but unresolved. Gravity/collision belong to later systems.

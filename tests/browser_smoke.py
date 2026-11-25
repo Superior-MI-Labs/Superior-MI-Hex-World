@@ -74,6 +74,14 @@ with sync_playwright() as p:
     page.locator("[data-visual-slot=contents]").select_option("fixture.chest.gems")
     page.locator("#applyAppearance").click()
     page.wait_for_function("document.querySelector('#appearanceStatus').textContent === 'Appearance applied'")
+    # Host opts into a physical condition using the existing authored boolean.
+    page.locator("#colliderRadius").fill("1")
+    page.locator("#colliderHeight").fill("3")
+    page.locator("#colliderInput").fill("open")
+    page.locator("#colliderEquals").fill("true")
+    page.locator("#applyCollider").click()
+    page.wait_for_function("document.querySelector('#colliderStatus').textContent==='Collider applied'")
+    assert page.locator("#colliderActive").text_content()=="Disabled by input"
     with page.expect_download() as appearance_save:
         page.locator("#save").click()
     saved=json.loads(Path(appearance_save.value.path()).read_text())
@@ -83,8 +91,10 @@ with sync_playwright() as p:
     page.locator("#useObject").click()
     page.wait_for_function("document.querySelector('#interactionStatus').textContent.includes('visual use applied')")
     page.wait_for_function("JSON.parse(document.querySelector('#objectAppearance').value).inputs.open===false")
+    assert page.locator("#colliderActive").text_content()=="Blocking"
     page.locator("#useObject").click()
     page.wait_for_function("JSON.parse(document.querySelector('#objectAppearance').value).inputs.open===true")
+    assert page.locator("#colliderActive").text_content()=="Disabled by input"
     page.locator("summary",has_text="Spatial interactions").click()
     page.locator("#removeObject").click()
     page.locator("#loadActor").click()
