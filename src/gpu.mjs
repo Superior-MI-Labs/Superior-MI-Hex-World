@@ -1,5 +1,6 @@
 // WebGL2 depth-tested triangles; all positions originate in the terrain mesh.
 import {terrainTexturePlan} from "./art-style.mjs";
+import {spriteShade} from "./lighting.mjs";
 const VS=`#version 300 es
 in vec3 a_position; in vec3 a_color; in vec2 a_uv; in vec3 a_cover; in float a_rim; in vec2 a_mask_uv; in vec4 a_weights; in float a_shade;
 out vec3 v_color; out vec2 v_uv; out vec3 v_cover; out float v_rim; out vec2 v_mask_uv; out vec4 v_weights; out float v_shade;
@@ -15,15 +16,15 @@ float coverage(float amount,float noise){
   return smoothstep(1.0-amount-width,1.0-amount+width,noise);
 }
 vec3 materialColor(vec3 tex,int mode){
-  if(mode==2)return mix(v_color,tex*v_shade,u_detail_strength);
+  if(mode==2)return mix(v_color,tex,u_detail_strength);
   vec3 detail=mode==1?tex:vec3(tex.r);
   return v_color*mix(vec3(1.0),detail,u_detail_strength);
 }
 void main(){
   vec4 t=texture(u_texture,v_uv);
-  if(u_mode==2){if(t.a<0.5)discard;color=vec4(t.rgb,1.0);}
-  else if(u_mode==3){if(t.a<0.98)discard;color=vec4(t.rgb,1.0);}
-  else if(u_mode==4){if(t.a<=0.02||t.a>=0.98)discard;color=t;}
+  if(u_mode==2){if(t.a<0.5)discard;color=vec4(t.rgb*v_color,1.0);}
+  else if(u_mode==3){if(t.a<0.98)discard;color=vec4(t.rgb*v_color,1.0);}
+  else if(u_mode==4){if(t.a<=0.02||t.a>=0.98)discard;color=vec4(t.rgb*v_color,t.a);}
   else if(u_mode==5){if(any(lessThan(v_uv,vec2(0.0)))||any(greaterThan(v_uv,vec2(1.0))))discard;color=vec4(0.0,0.0,0.0,t.a*v_color.r);}
   else {
     vec3 base=v_color;
@@ -42,7 +43,7 @@ void main(){
     if(v_rim>=0.0)base=mix(base,u_scorch_color,cover.z*.85);
     base=mix(base,u_leaf_color,leaf*.85);
     base=mix(base,u_snow_color,snow);
-    color=vec4(base,1.0);
+    color=vec4(base*v_shade,1.0);
   }
 }`;
 function shader(gl,type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;}
@@ -113,7 +114,7 @@ export function createRenderer(canvas){
     return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/19);}
-  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,softSprites=false,shadows=[]}={}){
+  function render(faces,view,{selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,softSprites=false,shadows=[]}={}){
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(uniforms.u_detail_strength,style?.detail.strength??.25);
     gl.uniform4iv(uniforms.u_color_modes,[0,0,0,0]);
@@ -128,7 +129,7 @@ export function createRenderer(canvas){
     const pack=(out,p,color,uv,cover=[0,0,0],rim=-1,maskUV=uv,weights=[1,0,0,0],shade=1)=>out.push(2*p.x/canvas.width-1,1-2*p.y/canvas.height,-(p.depth-center)*1.8/range,...color,...uv,...cover,rim,...maskUV,...weights,shade);
     const batchesTerrain=new Map();
     const repeat=style?.detail.repeat_ft??5;
-    const light=style?.lighting,lightLength=light?Math.hypot(...light.direction):1;
+    const light=lighting,lightLength=light?Math.hypot(...light.direction):1,spriteTint=Array(3).fill(spriteShade(light));
     for(const {f,p} of projected){
       const active=selected&&f.address?.every((v,i)=>v===selected[i]),color=f.color??(f.kind==="top"?(active?[.68,.77,.43]:[.45,.61,.35]):f.kind==="bottom"?[.34,.27,.22]:[.57,.42,.30]);
       const plan=terrainTexturePlan(f,style),key=JSON.stringify([plan.role,plan.keys]);
@@ -139,7 +140,7 @@ export function createRenderer(canvas){
         if(len>0)shade=light.ambient+(1-light.ambient)*Math.max(0,n.reduce((sum,x,i)=>sum+x*light.direction[i],0)/(len*lightLength));
       }
       const angle=(150+(f.edge??0)*60)*Math.PI/180;
-      for(let i=0;i<3;i++){const [x,y,z]=f.points[i],a=f.attributes?.[i],uv=f.kind==="side"?[(x*Math.cos(angle)+y*Math.sin(angle))/repeat,z/repeat]:[x/repeat,y/repeat];pack(data,p[i],(a?.color??color).map(v=>v*shade),uv,a?.cover??f.cover,a?.rim??-1,[(x+Math.max(0,a?.rim??0)*.35)/5,(y+Math.max(0,a?.rim??0)*.5)/5],plan.weights[i],shade);}
+      for(let i=0;i<3;i++){const [x,y,z]=f.points[i],a=f.attributes?.[i],uv=f.kind==="side"?[(x*Math.cos(angle)+y*Math.sin(angle))/repeat,z/repeat]:[x/repeat,y/repeat];pack(data,p[i],a?.color??color,uv,a?.cover??f.cover,a?.rim??-1,[(x+Math.max(0,a?.rim??0)*.35)/5,(y+Math.max(0,a?.rim??0)*.5)/5],plan.weights[i],shade*(1-(light?.occlusion??0)*(f.occlusion?.[i]??0)));}
     }
     for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}gl.activeTexture(gl.TEXTURE0);
     for(const {role,keys,modes,data} of batchesTerrain.values()){
@@ -150,7 +151,7 @@ export function createRenderer(canvas){
     }
     if(shadows.length&&!debug){const data=[];for(const f of shadows){const p=f.points.map(view);for(let i=0;i<3;i++)pack(data,p[i],[f.opacity,0,0],f.uv[i]);}gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,shadowTexture,5);gl.depthMask(true);gl.disable(gl.BLEND);}
     const batches=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
-    for(const {actor,quad} of actors){used.add(actor.image);const tex=spriteTexture(actor),batch=batches.get(tex)??[];for(const i of [0,1,2,0,2,3])pack(batch,quad[i],[1,1,1],uv[i]);batches.set(tex,batch);}
+    for(const {actor,quad} of actors){used.add(actor.image);const tex=spriteTexture(actor),batch=batches.get(tex)??[];for(const i of [0,1,2,0,2,3])pack(batch,quad[i],spriteTint,uv[i]);batches.set(tex,batch);}
     for(const [tex,batch] of batches)draw(batch,tex,softSprites?3:2);
     if(softSprites){
       // Opaque sprite cores write depth. Translucent fringes retain terrain
@@ -160,7 +161,7 @@ export function createRenderer(canvas){
       let current=null,batch=[];
       for(const {actor,quad} of ordered){
         const tex=spriteTexture(actor);if(current!==tex){if(current)draw(batch,current,4);batch=[];current=tex;}
-        for(const i of [0,1,2,0,2,3])pack(batch,quad[i],[1,1,1],uv[i]);
+        for(const i of [0,1,2,0,2,3])pack(batch,quad[i],spriteTint,uv[i]);
       }
       if(current)draw(batch,current,4);gl.depthMask(true);gl.disable(gl.BLEND);
     }

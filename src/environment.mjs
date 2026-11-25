@@ -15,6 +15,13 @@ export function validateClimate(value=DEFAULT_CLIMATE){
   assert(record(value)&&SEASONS.includes(value.season)&&finite(value.temperature_c,-100,100)&&["none","rain","snow","hail"].includes(value.precipitation)&&finite(value.intensity,0,1)&&(value.precipitation!=="none"||value.intensity===0),"Invalid climate");
   return {season:value.season,temperature_c:value.temperature_c,precipitation:value.precipitation,intensity:value.intensity};
 }
+export const DEFAULT_LIGHTING=Object.freeze({ambient:.57,direction:Object.freeze([-.45,-.35,.82]),occlusion:.4,sprite_strength:.35,shadow_strength:.45});
+export function validateLighting(l){
+  assert(record(l)&&finite(l.ambient,0,1)&&Array.isArray(l.direction)&&l.direction.length===3&&l.direction.every(v=>finite(v,-1e6,1e6))&&Math.hypot(...l.direction)>0,"Invalid lighting");
+  const result={ambient:l.ambient,direction:[...l.direction]};
+  for(const k of ["occlusion","sprite_strength","shadow_strength"]){assert(finite(l[k]??DEFAULT_LIGHTING[k],0,1),"Invalid lighting "+k);result[k]=l[k]??DEFAULT_LIGHTING[k];}
+  return result;
+}
 export function validateEnvironment(e={wind:CALM,zones:[]}){
   assert(record(e)&&Array.isArray(e.zones??[])&&(e.zones??[]).length<=128,"Invalid environment");
   const ids=new Set(),zones=(e.zones??[]).map(z=>{
@@ -22,7 +29,7 @@ export function validateEnvironment(e={wind:CALM,zones:[]}){
     assert(z.wind!==undefined||z.climate!==undefined,"Empty environmental zone");
     ids.add(z.id);return {id:z.id,center:[...z.center],radius:z.radius,levels:[...z.levels],...(z.wind!==undefined?{wind:validateWind(z.wind)}:{}),...(z.climate!==undefined?{climate:validateClimate(z.climate)}:{})};
   });
-  return {wind:validateWind(e.wind??CALM),climate:validateClimate(e.climate),zones};
+  return {wind:validateWind(e.wind??CALM),climate:validateClimate(e.climate),zones,...(e.lighting!==undefined?{lighting:validateLighting(e.lighting)}:{})};
 }
 function fieldAt(field,address,key,fallback){
   let value=field[key]??fallback;

@@ -158,6 +158,22 @@ with sync_playwright() as p:
     assert 105<gradient[1][0]<150 and 105<gradient[1][2]<150,materials
     assert gradient[2][2]>225 and gradient[2][0]<30,materials
     assert all(120<v<136 for v in materials["mixed"][:3]),materials
+    # Lighting also shades full snow coverage and preserves unlit debug colors.
+    lit=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs');
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const face={kind:'top',points:[[0,0,1],[64,0,1],[0,64,1]],color:[1,1,1],cover:[0,1,0],occlusion:[1,1,1]};
+      const lighting={ambient:.5,direction:[1,0,0],occlusion:.4,sprite_strength:.5,shadow_strength:.5};
+      r.render([face],view,{pattern:false,lighting});const snow=r.readPixel(10,10);
+      r.render([face],view,{pattern:false,lighting,debug:true});const debug=r.readPixel(10,10);
+      const img=document.createElement('canvas');img.width=img.height=1;const ctx=img.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,1,1);
+      r.render([face],view,{pattern:false,lighting,sprites:[{image:img,revision:0,points:[[5,5,2],[35,5,2],[35,35,2],[5,35,2]]}]});
+      return {snow,debug,sprite:r.readPixel(10,10)};
+    }""")
+    assert all(60<v<85 for v in lit["snow"][:3]),lit
+    assert lit["debug"][1]>240,lit
+    assert all(210<v<235 for v in lit["sprite"][:3]),lit
     # Verify the coverage gradient and exact zero/full endpoints in actual GPU pixels.
     coverage=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -184,6 +200,15 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).scatter_instances===0")
     page.locator("#scatter").check()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).scatter_instances>0")
+    page.locator("summary",has_text="World lighting").click()
+    page.locator("#sunAzimuth").fill("90")
+    page.locator("#sunElevation").fill("35")
+    page.locator("#sunAmbient").fill(".4")
+    page.locator("#applyLighting").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).lighting.ambient===0.4")
+    page.locator("#resetLighting").click()
+    page.wait_for_function("document.querySelector('#lightStatus').textContent==='Style lighting'")
+    page.locator("summary",has_text="World lighting").click()
     page.locator("#windSpeed").fill("20")
     page.locator("#applyWind").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).wind_bent_sprites>0 && JSON.parse(document.querySelector('#status').textContent).wind_state_sprites>0")

@@ -61,3 +61,6 @@ v0.24: explicit persistent cylindrical object colliders, swept walking queries a
 
 
 v0.25: indexed object collision queries and explicit host conditions bound to canonical Atlas inputs.
+
+
+v0.26: persistent world lighting override, terrain ambient occlusion, approximate directional object shadows and consistent material/sprite shading.

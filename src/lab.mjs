@@ -14,10 +14,10 @@ import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visu
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
 import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
 import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettlement} from "./settlement.mjs";
-import {contactShadows} from "./lighting.mjs";
+import {contactShadows,terrainOcclusion,directionalShadows} from "./lighting.mjs";
 import {objectVolumes} from "./collision.mjs";
 import {buildScatterPlan,promoteSample} from "./scatter.mjs";
-import {CALM,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend} from "./environment.mjs";
+import {CALM,DEFAULT_LIGHTING,validateLighting,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend} from "./environment.mjs";
 import {validateInteractions,interactionTags,cellTarget,entityTarget,contactResponse,bendBillboard} from "./interactions.mjs";
 import {validatePrefab,planPrefab,placePrefab,capturePrefab} from "./prefabs.mjs";
 import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
@@ -75,6 +75,19 @@ function updateWind(mode){try{const e=world.environment;
   world.setEnvironment(e);$("windStatus").textContent=e.zones.length+" local zones";
 }catch(e){$("windStatus").textContent=e.message;}}
 $("applyWind").onclick=()=>updateWind("global");$("localWind").onclick=()=>updateWind("local");$("shelterWind").onclick=()=>updateWind("shelter");$("clearWind").onclick=()=>updateWind("clear");
+function syncLighting(){
+  const l=world.environment.lighting??art?.profile.lighting??DEFAULT_LIGHTING,[x,y,z]=l.direction;
+  $("sunAzimuth").value=(Math.atan2(y,x)*180/Math.PI+360)%360;
+  $("sunElevation").value=Math.asin(z/Math.hypot(x,y,z))*180/Math.PI;
+  $("sunAmbient").value=l.ambient;
+  $("lightStatus").textContent=world.environment.lighting?"World lighting override":"Style lighting";
+}
+$("applyLighting").onclick=()=>{try{
+  const e=world.environment,a=Number($("sunAzimuth").value)*Math.PI/180,b=Number($("sunElevation").value)*Math.PI/180;
+  e.lighting=validateLighting({...art?.profile.lighting,ambient:Number($("sunAmbient").value),direction:[Math.cos(a)*Math.cos(b),Math.sin(a)*Math.cos(b),Math.sin(b)]});world.setEnvironment(e);syncLighting();
+}catch(e){$("lightStatus").textContent=e.message;}};
+$("resetLighting").onclick=()=>{const e=world.environment;delete e.lighting;world.setEnvironment(e);syncLighting();};
+$("ambientOcclusion").onchange=()=>{dirty=true;};
 function syncClimate(){const c=world.environment.climate;$("season").value=c.season;$("temperature").value=c.temperature_c;$("precipitation").value=c.precipitation;$("precipIntensity").value=c.intensity;$("climateStatus").textContent="World climate loaded";}
 function updateClimate(local){try{
   const e=world.environment,kind=$("precipitation").value,c={season:$("season").value,temperature_c:Number($("temperature").value),precipitation:kind,intensity:kind==="none"?0:Number($("precipIntensity").value)};
@@ -311,7 +324,7 @@ function reset(){
   else if(worldMode==="settlement"){ground=settlementGround;domain=settlementDomain;activeChunks=0;yaw=0;scale=16;panX=0;panY=65;$("zoom").value=16;}
   else{ground=island;domain=islandDomain;activeChunks=0;for(let q=-1;q<=0;q++)for(let r=-1;r<=0;r++)for(let z=-1;z<=0;z++)world.defineChunk(q,r,z);for(const [q,r] of ground)for(const z of [-1,0])world.set(q,r,z,withSurface({material:"soil",shape:uniformShape(n)}, {growth:z===0?.65:0}));}
   if(worldMode!=="settlement")placeObject(world,{id:"demo-actor",address:[0,0,0],anchor:"surface",visual:demoVisual});
-  $("worldMode").value=worldMode;dirty=true;syncWind();syncClimate();sync();
+  $("worldMode").value=worldMode;dirty=true;syncWind();syncClimate();syncLighting();sync();
 }
 $("worldMode").onchange=()=>{const next=$("worldMode").value;if(next===worldMode)return;if(!confirm("Start a new world? Export your current world first if you want to keep it.")){$("worldMode").value=worldMode;return;}worldMode=next;reset();};
 function sync(){
@@ -350,7 +363,7 @@ async function loadArt(reference){
   const request=++artRequest;$("artStatus").textContent="Loading art profile";
   try{const next=await fetchStyle(reference,catalog);
     if(request!==artRequest)return;
-    gpu.setTerrainStyle(next);art=next;scatterDirty=true;
+    gpu.setTerrainStyle(next);art=next;scatterDirty=true;syncLighting();
     $("artStatus").textContent=next.profile.id==="fantasy-meadow-fixture"?"Atlas meadow fixture loaded":"Atlas art loaded: "+next.profile.id;
     $("scatterStatus").textContent=next.scatter.size+" decorative families"+(next.scatterWarnings.length?"; "+next.scatterWarnings.join("; "):"");
   }catch(e){if(request===artRequest)$("artStatus").textContent=(art?"Previous style retained: ":"Procedural fallback: ")+e.message;}
@@ -388,7 +401,7 @@ $("load").onchange=async()=>{try{
   world=next;meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
   yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;$("worldMode").value=worldMode;
   if(generated)refreshRegion(true);else{ground=settlement?settlementGround:island;domain=settlement?settlementDomain:islandDomain;activeChunks=0;}
-  syncWind();syncClimate();sync();$("message").textContent="World imported";
+  syncWind();syncClimate();syncLighting();sync();$("message").textContent="World imported";
 }catch(e){$("message").textContent=e.message;}finally{$("load").value="";}};
 $("mode").onchange=()=>clock.configure($("mode").value);$("step").onclick=()=>{const before=clock.simulation;clock.advance(6);simulate(clock.simulation-before);};function addFire(definition){world.putEffect({id:crypto.randomUUID(),kind:"fire",address:[...selected],instance:effect(definition,clock.simulation)});}
 $("fire").onclick=()=>addFire({behavior:"persistent"});$("timed").onclick=()=>addFire({behavior:"timed",duration:5});$("rotate").onclick=()=>yaw=(yaw+1)%6;$("zoom").oninput=()=>scale=Number($("zoom").value);
@@ -411,7 +424,7 @@ canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=M
 $("resetView").onclick=()=>{yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
 canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
 function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);refreshRegion();ctx.clearRect(0,0,900,450);
-  if(dirty){scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
+  if(dirty){scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});if($("ambientOcclusion").checked)faces=terrainOcclusion(world,faces);dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
   if(lastCollisionRevision!==world.collisionRevision){lastCollisionRevision=world.collisionRevision;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);}
   const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked,poses=new Map(),contacts=[];
   for(const [id,motion] of playback){const pose=sampleRoute(motion.points,(clock.visual-motion.started)*10);if(pose.done){playback.delete(id);continue;}poses.set(id,pose);contacts.push({id,point:pose.point});}
@@ -447,7 +460,7 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
     animateRaster(r);
     sprites.push({image:r.image,revision:r.revision,points:flex(billboard(p,yaw,w,height,r.pivot),p,height,sample.contact&&contacts.length?cellContact(sample.address):null,null,wind,v.wind)});scatterInstances++;
-    if(sample.shadow)shadowObjects.push({address:sample.address,point:p,radius:Math.min(grid.horizontal_ft/2,w*.45),opacity:.35});
+    if(sample.shadow)shadowObjects.push({address:sample.address,point:p,height,radius:Math.min(grid.horizontal_ft/2,w*.45),opacity:.35});
   }
   if($("vegetation").checked)for(const f of visible){
     if(f.kind!=="top"||f.vegetation<=0)continue;
@@ -473,9 +486,11 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     if(!s){unresolvedObjects++;continue;}
     s.update(clock.visual*1000).catch(err=>{entry.error=err.message;entry.sprite=null;});
     sprites.push({image:s.image,revision:s.revision,points:flex(billboard(p,yaw,s.width,s.height,s.pivot),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
-    if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
+    if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,height:s.height,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
   }
-  gpu.render(visible,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,softSprites:$("softSprites").checked,shadows:$("contactShadows").checked?contactShadows(visible,shadowObjects):[]});
+  const light=field.lighting??(styled?art.profile.lighting:null),shadows=$("contactShadows").checked?contactShadows(visible,shadowObjects):[];
+  const sun=light&&$("directionalShadows").checked?directionalShadows(visible,shadowObjects,light,grid):{faces:[],truncated:false};
+  gpu.render(visible,view,{selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
   if($("wire").checked){
     for(const a of domain){if(a[2]!==selected[2])continue;const p=projectLocal(a,[0,0,0]);if(p.x<-scale*5||p.x>canvas.width+scale*5||p.y<-scale*5||p.y>canvas.height+scale*5||hasVolume(world.get(...a).shape))continue;polygon(vertices(uniformShape(0),grid).upper.slice(0,6).map(p=>projectLocal(a,p)),null,"#344b56");}
 
@@ -512,6 +527,6 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
-  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,camera:{yaw,scale,panX,panY},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

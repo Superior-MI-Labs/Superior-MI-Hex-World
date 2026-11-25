@@ -1,7 +1,7 @@
 // Presentation profile: binds existing Atlas IDs to Hex World visual roles.
 import {openAtlasPack} from "./assets.mjs";
 import {stableUnit} from "./materials.mjs";
-import {validateWindResponse,windState,SEASONS} from "./environment.mjs";
+import {validateWindResponse,windState,SEASONS,validateLighting} from "./environment.mjs";
 import {adoptSpatialProfile} from "./spatial-assets.mjs";
 import {directionalBinding} from "./entities.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
@@ -37,11 +37,11 @@ export function validateStyle(s){
     assert(id(k)&&m&&typeof m==="object"&&!Array.isArray(m)&&mode(m.color_mode)&&(m.top!==undefined||m.side!==undefined),"Invalid material texture");
     for(const role of ["top","side"])if(m[role]!==undefined){const b=artBinding(m[role],s.manifest);assert(b.state===undefined,"Terrain textures must be static");}
   }
-  assert(l&&Number.isFinite(l.ambient)&&l.ambient>=0&&l.ambient<=1&&Array.isArray(l.direction)&&l.direction.length===3&&l.direction.every(Number.isFinite)&&Math.hypot(...l.direction)>0,"Invalid lighting");
+  const light=validateLighting(l);
   assert(v&&v.assets&&typeof v.assets==="object"&&!Array.isArray(v.assets)&&Object.keys(v.assets).length>0&&Object.keys(v.assets).length<=512&&Number.isInteger(v.samples_per_triangle)&&v.samples_per_triangle>=1&&v.samples_per_triangle<=8&&positive(v.min_height_ft)&&positive(v.max_height_ft)&&v.max_height_ft>=v.min_height_ft&&positive(v.far_px_per_ft)&&v.near_px_per_ft>v.far_px_per_ft,"Invalid vegetation profile");
   for(const b of Object.values(v.assets))artBinding(b,s.manifest);
   assert(v.wind===undefined||(v.wind&&typeof v.wind==="object"&&!Array.isArray(v.wind)),"Invalid vegetation wind map");
-  const out=structuredClone(s);
+  const out=structuredClone(s);out.lighting=light;
   if(v.wind!==undefined){for(const [k,w] of Object.entries(v.wind)){assert(own(v.assets,k),"Unknown wind variant: "+k);out.vegetation.wind[k]=validateWindResponse(w);}}
   assert(v.seasonal===undefined||(v.seasonal&&typeof v.seasonal==="object"&&!Array.isArray(v.seasonal)),"Invalid seasonal bindings");
   for(const [season,entries] of Object.entries(v.seasonal??{})){
