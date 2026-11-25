@@ -5,6 +5,21 @@ import {validateWindResponse} from "./environment.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const id=s=>typeof s==="string"&&s.length>0&&s.length<=200;
 export const validAddress=a=>Array.isArray(a)&&a.length===3&&a.every(Number.isSafeInteger);
+const own=(o,k)=>Object.hasOwn(o,k);
+function selectionMap(value,valid,label){
+  assert(value&&typeof value==="object"&&!Array.isArray(value)&&Object.keys(value).length<=64,"Invalid "+label);
+  const pairs=Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0);
+  for(const [k,v] of pairs)assert(id(k)&&!["__proto__","constructor","prototype"].includes(k)&&valid(v),"Invalid "+label+" entry");
+  return Object.fromEntries(pairs);
+}
+export function visualSelection(s={}){
+  assert(s&&typeof s==="object"&&!Array.isArray(s),"Invalid visual selection");
+  const out={};
+  if(s.preset!=null){assert(id(s.preset),"Invalid preset");out.preset=s.preset;}
+  if(s.inputs!==undefined)out.inputs=selectionMap(s.inputs,v=>typeof v==="boolean"||typeof v==="number"&&Number.isFinite(v)||id(v),"visual inputs");
+  if(s.slots!==undefined)out.slots=selectionMap(s.slots,id,"visual slots");
+  return out;
+}
 export function spriteBinding(b){
   assert(b&&typeof b.manifest==="string"&&b.manifest.length<=2048&&id(b.asset),"Invalid sprite binding");
   const url=new URL(b.manifest,"https://local.invalid/");
@@ -14,7 +29,8 @@ export function spriteBinding(b){
   assert(Number.isFinite(height_ft)&&height_ft>0&&height_ft<=100,"Invalid sprite height");
   assert(b.walk_state===undefined||b.walk_state===null||id(b.walk_state),"Invalid walking state");
   assert(b.views===undefined||(Array.isArray(b.views)&&b.views.length===6&&b.views.every(id)),"Directional binding requires six Atlas asset IDs");
-  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.views!==undefined?{views:[...b.views]}:{}),...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
+  assert(b.archive_sha256===undefined||typeof b.archive_sha256==="string"&&/^[a-f0-9]{64}$/.test(b.archive_sha256)&&url.pathname.toLowerCase().endsWith(".zip"),"Invalid archive digest");
+  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.archive_sha256?{archive_sha256:b.archive_sha256}:{}),...visualSelection(b),...(b.views!==undefined?{views:[...b.views]}:{}),...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
 }
 export function validateEntity(e){
   assert(e&&id(e.id)&&validAddress(e.address),"Invalid entity");

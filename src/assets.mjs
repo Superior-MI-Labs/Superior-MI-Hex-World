@@ -1,6 +1,7 @@
-// Atlas owns visual semantics. This adapter passes a validated subset to
+// Atlas owns visual semantics. This adapter passes a bounded fixed-canvas subset to
 // the pinned canonical renderer, then exposes a raster for the GPU billboard.
 import {AssetRegistry} from "./core.mjs";
+import {visualSelection} from "./entities.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const pair=a=>Array.isArray(a)&&a.length===2&&a.every(Number.isFinite);
 const safePath=p=>typeof p==="string"&&/^[a-zA-Z0-9_./-]+$/.test(p)&&!p.startsWith("/")&&p.split("/").every(x=>x&&x!=="."&&x!=="..");
@@ -9,9 +10,13 @@ export function validateSpritePack(pack,entry){
   assert(pack?.schema==="smi-visual-pack/1"&&id(pack.pack_id)&&id(pack.version)&&id(pack.license)&&pack.textures&&Array.isArray(pack.assets),"Invalid Atlas pack");
   assert(pack.assets.length<=10000,"Pack exceeds asset limit");
   const map=new Map();for(const a of pack.assets){assert(id(a?.id)&&!map.has(a.id),"Duplicate/invalid asset ID");map.set(a.id,a);}
-  const visited=new Set(),active=new Set();
+  const visited=new Set(),active=new Set(),costs=new Map();
+  let hasComposition=false;
+  const size=a=>pair(a)&&a.every(v=>Number.isInteger(v)&&v>0&&v<=4096);
+  const bounded=n=>Number.isFinite(n)&&Math.abs(n)<=16384;
   function visit(key){
-    assert(!active.has(key),"Cyclic asset reference");if(visited.has(key))return;
+    assert(!active.has(key),"Cyclic asset reference");if(visited.has(key))return costs.get(key);
+    assert(active.size<32,"Asset nesting exceeds world limit");let cost=1;
     const a=map.get(key);assert(a,"Missing asset "+key);active.add(key);
     if(a.pivot)assert(pair(a.pivot)&&a.pivot.every(v=>v>=0&&v<=1),"Invalid pivot");
     if(a.kind==="region"){
@@ -23,13 +28,32 @@ export function validateSpritePack(pack,entry){
       assert(!a.nine_slice_px,"Nine-slice is not a world sprite");
     }else if(a.kind==="sequence"){
       assert(Array.isArray(a.frames)&&a.frames.length>0&&a.frames.length<=1024&&Number.isFinite(a.default_fps)&&a.default_fps>0&&["loop","once","pingpong"].includes(a.playback),"Invalid sequence");
-      for(const f of a.frames){assert(f.duration_ms===undefined||Number.isFinite(f.duration_ms)&&f.duration_ms>0,"Invalid frame duration");if(f.offset_px)assert(pair(f.offset_px),"Invalid frame offset");visit(f.asset);}
+      for(const f of a.frames){assert(f.duration_ms===undefined||Number.isFinite(f.duration_ms)&&f.duration_ms>0,"Invalid frame duration");if(f.offset_px)assert(pair(f.offset_px),"Invalid frame offset");cost+=visit(f.asset);}
     }else if(a.kind==="state_set"){
-      assert(a.states&&Object.hasOwn(a.states,a.default_state),"Invalid state set");for(const key of Object.values(a.states))visit(key);
+      assert(a.states&&Object.hasOwn(a.states,a.default_state),"Invalid state set");for(const key of Object.values(a.states))cost+=visit(key);
+    }else if(a.kind==="composition"){
+      hasComposition=true;
+      assert(size(a.size_px)&&Array.isArray(a.layers)&&a.layers.length>0&&a.layers.length<=128,"Invalid fixed world composition");
+      const slotCore=globalThis.VisualAtlasSlots;assert(slotCore,"Missing Atlas slot resolver");
+      assert(a.inputs===undefined||a.inputs&&typeof a.inputs==="object"&&!Array.isArray(a.inputs)&&Object.keys(a.inputs).length<=64,"Invalid composition inputs");
+      for(const def of Object.values(a.inputs??{}))assert(slotCore.accepts(def,def?.default),"Invalid composition input default");
+      assert(a.duration_ms===undefined||Number.isInteger(a.duration_ms)&&a.duration_ms>0&&a.duration_ms<=600000,"Invalid composition duration");
+      for(const l of a.layers){
+        assert(l&&((typeof l.asset==="string")!==(typeof l.slot==="string"))&&!l.repeat,"World composition needs fixed non-repeated layers");
+        assert(l.size_px===undefined||size(l.size_px),"Invalid layer size");
+        for(const k of ["x","y","rotation_deg","scale_x","scale_y","opacity"])assert(l[k]===undefined||bounded(l[k]),"Invalid layer transform");
+        assert(l.offset_px===undefined||pair(l.offset_px)&&l.offset_px.every(bounded),"Invalid layer offset");
+        const choices=l.asset?[l.asset]:a.slots?.[l.slot]?.options;
+        assert(Array.isArray(choices)&&choices.length>0&&choices.length<=128,"Invalid world slot");
+        for(const ref of choices)cost+=visit(ref);
+      }
     }else throw Error("Unsupported world sprite kind: "+a.kind);
-    active.delete(key);visited.add(key);
+    assert(cost<=4096,"World sprite dependency expansion exceeds limit");
+    active.delete(key);visited.add(key);costs.set(key,cost);return cost;
   }
-  visit(entry);return map;
+  visit(entry);
+  if(hasComposition){const errors=globalThis.VisualAtlasSlots.validate({...pack,assets:[...visited].map(id=>map.get(id))});assert(!errors.length,"Invalid Atlas composition: "+errors[0]);}
+  return map;
 }
 export function httpProvider(fetcher=fetch){
   return {async loadPack(reference){
@@ -38,34 +62,74 @@ export function httpProvider(fetcher=fetch){
     const text=await r.text();assert(text.length<=5e6,"Manifest exceeds size limit");return JSON.parse(text);
   }};
 }
-export async function openAtlasPack(manifest,registry=new AssetRegistry()) {
+// Both hosted manifests and approved collection ZIPs enter the same renderer.
+export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest=null) {
   const url=new URL(manifest,location.href);
-  // Default provider is only installed on this private registry.
-  registry.register("http",httpProvider());
-  const pack=await registry.load("http",url.href);
+  assert(["http:","https:"].includes(url.protocol)&&!url.username&&!url.password,"Unsupported pack URL");
+  let pack,archive=null;
+  if(url.pathname.toLowerCase().endsWith(".zip")){
+    const r=await fetch(url,{credentials:"omit",redirect:"error"});assert(r.ok,"Atlas ZIP unavailable");
+    const limit=globalThis.VisualAtlasZip.MAX_BYTES;
+    assert(Number(r.headers.get("content-length")??0)<=limit,"Atlas ZIP exceeds size limit");
+    // Bound streamed bytes even when the server omits Content-Length.
+    const reader=r.body.getReader(),parts=[];let length=0;
+    try{for(;;){const {value,done}=await reader.read();if(done)break;length+=value.byteLength;assert(length<=limit,"Atlas ZIP exceeds size limit");parts.push(value);}}
+    catch(e){await reader.cancel();throw e;}
+    const blob=new Blob(parts);
+    if(digest){const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await blob.arrayBuffer())),x=>x.toString(16).padStart(2,"0")).join("");assert(hash===digest,"Atlas archive SHA-256 mismatch");}
+    const result=await globalThis.VisualAtlasZip.read(blob,{JSZip:globalThis.JSZip,Collections:globalThis.VisualAtlasCollections,name:url.pathname.split("/").at(-1)});
+    pack=result.resolved.pack;archive=result.zip;
+  }else{
+    assert(!digest,"Archive digest requires ZIP");
+    registry.register("http",httpProvider());
+    pack=await registry.load("http",url.href);
+  }
   const images=new Map();
   async function getImage(key){
     if(images.has(key))return images.get(key);
-    const t=pack.textures[key],target=new URL(t.path,url);assert(target.origin===url.origin&&target.href.startsWith(new URL(".",url).href),"Texture escapes pack directory");
-    const p=new Promise((resolve,reject)=>{const i=new Image();i.crossOrigin="anonymous";i.onload=()=>{try{assert(i.naturalWidth===t.width_px&&i.naturalHeight===t.height_px,"Texture dimensions mismatch");resolve(i);}catch(e){reject(e);}};i.onerror=()=>reject(Error("Texture unavailable: "+key));i.src=target.href;});images.set(key,p);return p;
+    const t=pack.textures[key];assert(t&&safePath(t.path),"Unsafe texture path");
+    const p=(async()=>{
+      let target,temporary=false;
+      if(archive){const member=archive.file(t.path);assert(member,"Missing archive texture: "+key);target=URL.createObjectURL(await member.async("blob"));temporary=true;}
+      else{target=new URL(t.path,url);assert(target.origin===url.origin&&target.href.startsWith(new URL(".",url).href),"Texture escapes pack directory");}
+      try{return await new Promise((resolve,reject)=>{const i=new Image();i.crossOrigin="anonymous";i.onload=()=>{try{assert(i.naturalWidth===t.width_px&&i.naturalHeight===t.height_px,"Texture dimensions mismatch");resolve(i);}catch(e){reject(e);}};i.onerror=()=>reject(Error("Texture unavailable: "+key));i.src=String(target);});}
+      finally{if(temporary)URL.revokeObjectURL(target);}
+    })();images.set(key,p);return p;
   }
-  return {createRaster({asset,state=null,regionOnly=false,requireState=false}){
+  return {createRaster({asset,state=null,regionOnly=false,requireState=false,...options}){
   const map=validateSpritePack(pack,asset);
   const root=map.get(asset);
   if(regionOnly)assert(root.kind==="region","Static texture must reference an Atlas region");
   if(requireState)assert(root.kind==="state_set"&&state!==null,"Wind state needs an Atlas state set");
   if(state!==null&&root.kind==="state_set")assert(Object.hasOwn(root.states,state),"Unknown Atlas state: "+state);
+  const selection=visualSelection(options),slots=globalThis.VisualAtlasSlots;
+  const explicit=Object.keys(selection).length>0;
+  assert(!explicit||root.kind==="composition","Visual inputs, slots and presets require a root composition");
+  const resolved=root.kind==="composition"?slots.resolve(root,selection.preset,selection.slots):{inputs:{}};
+  for(const [key,value] of Object.entries(selection.inputs??{}))assert(Object.hasOwn(root.inputs??{},key)&&slots.accepts(root.inputs[key],value),"Invalid composition input: "+key);
+  const values={...resolved.inputs,...selection.inputs};
   const renderer=globalThis.VisualAtlasRenderer.create({getAsset:id=>map.get(id),getImage,slots:globalThis.VisualAtlasSlots,timeline:globalThis.VisualAtlasTimeline,visualCore:globalThis.VisualAtlasVisualCore});
-  const [w,h]=renderer.sizeFor(asset),canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
+  const [w,h]=renderer.sizeFor(asset,new Set(),values,selection.preset,selection.slots);assert([w,h].every(v=>Number.isInteger(v)&&v>0&&v<=4096),"World sprite raster exceeds limit");const canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
   let revision=0,busy=false,last=-Infinity,pivot=[.5,1];
   return {image:canvas,pixelWidth:w,pixelHeight:h,animated:root.kind!=="region",get pivot(){return pivot;},get revision(){return revision;},
     async update(time){
       if(busy||(root.kind==="region"&&revision>0)||time-last<80)return false;busy=true;
-      try{ctx.clearRect(0,0,w,h);await renderer.drawAsset(asset,ctx,0,0,w,h,time,{},state);pivot=renderer.pivotFor(asset,time,state)??[.5,1];const out=canvas.getContext("2d");out.clearRect(0,0,w,h);out.drawImage(back,0,0);revision++;last=time;return true;}finally{busy=false;}
+      try{ctx.clearRect(0,0,w,h);await renderer.drawAsset(asset,ctx,0,0,w,h,time,values,state,new Set(),selection.slots,selection.preset);pivot=renderer.pivotFor(asset,time,state)??[.5,1];const out=canvas.getContext("2d");out.clearRect(0,0,w,h);out.drawImage(back,0,0);revision++;last=time;return true;}finally{busy=false;}
     }};
   }};
 }
-export async function createAtlasRaster({manifest,...binding},registry){return (await openAtlasPack(manifest,registry)).createRaster(binding);}
+// Share decoded sheets and archive resolution across object variants.
+// Failed sessions are retryable; bound the session cache, not world records.
+const packSessions=new Map();
+export async function createAtlasRaster({manifest,archive_sha256,...binding},registry){
+  if(registry)return (await openAtlasPack(manifest,registry,archive_sha256)).createRaster(binding);
+  const key=JSON.stringify([new URL(manifest,location.href).href,archive_sha256??null]);
+  if(!packSessions.has(key)){
+    const p=openAtlasPack(manifest,undefined,archive_sha256).catch(e=>{packSessions.delete(key);throw e;});packSessions.set(key,p);
+    if(packSessions.size>16)packSessions.delete(packSessions.keys().next().value);
+  }
+  return (await packSessions.get(key)).createRaster(binding);
+}
 
 export async function createAtlasSprite({height_ft=4,...binding},registry){
   if(!Number.isFinite(height_ft)||height_ft<=0)throw Error("Invalid sprite height");

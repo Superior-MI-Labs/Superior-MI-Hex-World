@@ -1,6 +1,6 @@
 import {shape, uniformShape, validateSubdivisions} from "./geometry.mjs";
 import {surface} from "./materials.mjs";
-import {validateEntity,validAddress} from "./entities.mjs";
+import {validateEntity,validAddress,visualSelection} from "./entities.mjs";
 import {interactionTags} from "./interactions.mjs";
 import {validateEnvironment} from "./environment.mjs";
 export {shape} from "./geometry.mjs";
@@ -63,6 +63,11 @@ export class World {
   getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
   putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);}
   removeEntity(id){return this.#entities.delete(id);}
+  setEntityAppearance(id,selection){
+    const e=this.#entities.get(id);requireThat(e,"Unknown entity");
+    const {inputs,slots,preset,...visual}=e.visual;
+    this.#entities.set(id,validateEntity({...e,visual:{...visual,...visualSelection(selection)}}));
+  }
   setEntityOrientation(id,orientation_steps){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,orientation_steps}));}
   setEntityTags(id,tags){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,interaction_tags:tags}));}
   relocateEntity(id,address){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const next=validateEntity({...old,address});requireThat(this.get(...next.address),"Unknown entity cell");this.#entities.set(id,next);}

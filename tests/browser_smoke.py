@@ -1,4 +1,7 @@
 import json
+import hashlib
+from io import BytesIO
+from zipfile import ZipFile
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 with sync_playwright() as p:
@@ -23,6 +26,47 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_object_view==='smi.hex.grass.01'")
     page.locator("#removeObject").click()
     page.locator("#resetView").click()
+    page.locator("#loadActor").click()
+    page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
+    # Real shared ZIP reader, canonical composition and independent input/slot choices.
+    stream=BytesIO()
+    root=Path("examples/chest-fixture")
+    with ZipFile(stream,"w") as z:
+        z.write(root/"manifest.json","manifest.json")
+        z.write(root/"textures/chest.png","textures/chest.png")
+    payload=stream.getvalue()
+    page.route("**/chest-test.zip",lambda route: route.fulfill(body=payload,content_type="application/zip"))
+    digest=hashlib.sha256(payload).hexdigest()
+    chest=page.evaluate("""async digest => {
+      const {createAtlasRaster}=await import('/src/assets.mjs');
+      const base={manifest:'./chest-test.zip',archive_sha256:digest,asset:'fixture.chest'};
+      async function draw(inputs,slots,preset='closed'){
+        const r=await createAtlasRaster({...base,inputs,slots,preset});await r.update(0);
+        return Array.from(r.image.getContext('2d').getImageData(0,0,64,64).data);
+      }
+      const gold={contents:'fixture.chest.gold'},gems={contents:'fixture.chest.gems'};
+      const closedGold=await draw({open:false},gold),closedGems=await draw({open:false},gems);
+      const openGold=await draw({open:true},gold),openGems=await draw({open:true},gems);
+      const equal=(a,b)=>a.every((v,i)=>v===b[i]);
+      let invalid=false,badHash=false,badInput=false;
+      try{await draw({open:true},{contents:'fixture.chest.front'});}catch(e){invalid=true;}
+      try{await draw({open:42},gold);}catch(e){badInput=true;}
+      try{await createAtlasRaster({...base,archive_sha256:'0'.repeat(64)});}catch(e){badHash=e.message.includes('SHA-256');}
+      return {closedSame:equal(closedGold,closedGems),openDifferent:!equal(openGold,openGems),preset:equal(openGold,await draw({},gold,'treasure')),invalid,badHash,badInput};
+    }""",digest)
+    assert all(chest.values()),chest
+    page.locator("#loadChest").click()
+    page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
+    page.locator("#placeActor").click()
+    page.locator("#objects").select_option(index=1)
+    page.locator("#objectAppearance").fill(json.dumps({"preset":"treasure","slots":{"contents":"fixture.chest.gems"}}))
+    page.locator("#applyAppearance").click()
+    page.wait_for_function("document.querySelector('#appearanceStatus').textContent === 'Appearance applied'")
+    with page.expect_download() as appearance_save:
+        page.locator("#save").click()
+    saved=json.loads(Path(appearance_save.value.path()).read_text())
+    assert next(e for e in saved["entities"] if e["visual"]["asset"]=="fixture.chest")["visual"]["slots"]["contents"]=="fixture.chest.gems"
+    page.locator("#removeObject").click()
     page.locator("#loadActor").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     # Verify actual GPU depth with deliberately overlapping triangles and both orders.

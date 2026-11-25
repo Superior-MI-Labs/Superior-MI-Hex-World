@@ -1,0 +1,195 @@
+{
+  "schema": "smi-visual-pack/1",
+  "pack_id": "fixture.chest.pack",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Original geometric pixel fixture only; not production artwork.",
+  "interfaces": {
+    "fixture.chest.contents/1": {
+      "size_px": [
+        64,
+        64
+      ],
+      "allow_scale": false
+    }
+  },
+  "textures": {
+    "sheet": {
+      "path": "textures/chest.png",
+      "width_px": 384,
+      "height_px": 64
+    }
+  },
+  "assets": [
+    {
+      "id": "fixture.chest.back",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "fixture.chest.front",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        64,
+        0,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "fixture.chest.lid",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        128,
+        0,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ]
+    },
+    {
+      "id": "fixture.chest.empty",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        192,
+        0,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ],
+      "implements": [
+        "fixture.chest.contents/1"
+      ]
+    },
+    {
+      "id": "fixture.chest.gold",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        256,
+        0,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ],
+      "implements": [
+        "fixture.chest.contents/1"
+      ]
+    },
+    {
+      "id": "fixture.chest.gems",
+      "kind": "region",
+      "texture": "sheet",
+      "rect_px": [
+        320,
+        0,
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ],
+      "implements": [
+        "fixture.chest.contents/1"
+      ]
+    },
+    {
+      "id": "fixture.chest",
+      "kind": "composition",
+      "size_px": [
+        64,
+        64
+      ],
+      "pivot": [
+        0.5,
+        1
+      ],
+      "inputs": {
+        "open": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "slots": {
+        "contents": {
+          "accepts": "fixture.chest.contents/1",
+          "default": "fixture.chest.empty",
+          "options": [
+            "fixture.chest.empty",
+            "fixture.chest.gold",
+            "fixture.chest.gems"
+          ]
+        }
+      },
+      "presets": {
+        "closed": {
+          "inputs": {
+            "open": false
+          }
+        },
+        "treasure": {
+          "inputs": {
+            "open": true
+          },
+          "slots": {
+            "contents": "fixture.chest.gold"
+          }
+        }
+      },
+      "default_preset": "closed",
+      "layers": [
+        {
+          "id": "back",
+          "asset": "fixture.chest.back"
+        },
+        {
+          "id": "contents",
+          "slot": "contents",
+          "visible_when": {
+            "input": "open",
+            "equals": true
+          }
+        },
+        {
+          "id": "front",
+          "asset": "fixture.chest.front"
+        },
+        {
+          "id": "lid",
+          "asset": "fixture.chest.lid",
+          "visible_when": {
+            "input": "open",
+            "equals": false
+          }
+        }
+      ]
+    }
+  ]
+}

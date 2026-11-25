@@ -1,0 +1,12 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {createRequire} from "node:module";
+import {readFileSync} from "node:fs";
+import {validateSpritePack} from "../src/assets.mjs";
+import {spriteBinding,visualKey,directionalBinding} from "../src/entities.mjs";
+import {World} from "../src/core.mjs";
+const require=createRequire(import.meta.url);globalThis.VisualAtlasSlots=require("../vendor/atlas/slot-core.js");
+const pack=JSON.parse(readFileSync(new URL("../examples/chest-fixture/manifest.json",import.meta.url)));
+const id="fixture.chest",visual={manifest:"./examples/chest-fixture/manifest.json",asset:id,preset:"treasure",inputs:{open:false},slots:{contents:"fixture.chest.gems"}};
+test("composition and compatible choices use the canonical Atlas resolver",()=>{const a=validateSpritePack(pack,id).get(id);const slots=globalThis.VisualAtlasSlots.resolve(a,visual.preset,visual.slots);assert.equal(slots.slots.contents,"fixture.chest.gems");assert.equal(slots.inputs.open,true);assert.throws(()=>globalThis.VisualAtlasSlots.resolve(a,null,{contents:"fixture.chest.front"}));const bad=structuredClone(pack);bad.assets.at(-1).layers[0].asset=id;assert.throws(()=>validateSpritePack(bad,id),/Cyclic/);});
+test("appearance selections are normalized, persist, and do not change the entity position",()=>{const cfg={schema:"smi-hex-world/1",id:"w",grid:{horizontal_ft:5,vertical_ft:5,geometry_subdivisions:2,chunk_size:[16,16,16]},simulation:{mode:"frozen",rate:1}},w=new World(cfg);w.defineChunk(0,0,0);w.putEntity({id:"chest",address:[0,0,0],anchor:"cell",visual});w.setEntityAppearance("chest",{preset:"closed",inputs:{open:true}});const e=World.restore(w.snapshot()).getEntity("chest");assert.equal(e.visual.inputs.open,true);assert.equal(e.visual.slots,undefined);assert.deepEqual(e.address,[0,0,0]);assert.equal(directionalBinding(e.visual,2).preset,"closed");assert.equal(visualKey({...visual,inputs:{b:1,a:true}}),visualKey({...visual,inputs:{a:true,b:1}}));assert.throws(()=>spriteBinding({...visual,inputs:{open:{code:"x"}}}));assert.throws(()=>spriteBinding({...visual,archive_sha256:"a".repeat(64)}));});

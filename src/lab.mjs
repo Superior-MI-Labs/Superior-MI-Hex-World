@@ -8,7 +8,7 @@ import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
 import {fetchStyle,vegetationSamples,vegetationRaster,vegetationWind} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
-import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding} from "./entities.mjs";
+import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection} from "./entities.mjs";
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
 import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
 import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettlement} from "./settlement.mjs";
@@ -135,11 +135,11 @@ function syncConstruction(){
   $("removeObject").disabled=$("setObjectTags").disabled=$("useObject").disabled=$("rotateObject").disabled=!items.length;
   $("objectOrientation").textContent=items.length?((world.getEntity(menu.value)?.orientation_steps??0)*60)+"°":"No object";
   $("objectTags").value=world.getEntity(menu.value)?.interaction_tags?.join(", ")??"";
-  syncMovement();
+  syncAppearance();syncMovement();
 }
 for(const key of ["prefab","prefabRotation","prefabOffset"])$(key).onchange=syncConstruction;
 $("placePrefab").onclick=()=>{try{const {p,anchor,turns}=prefabPlan();if($("placePrefab").disabled)return;placePrefab(world,p,anchor,turns);dirty=true;sync();$("message").textContent=p.name+" placed";}catch(e){$("message").textContent=e.message;}};
-$("objects").onchange=()=>{const e=world.getEntity($("objects").value);$("objectTags").value=e?.interaction_tags?.join(", ")??"";$("objectOrientation").textContent=e?((e.orientation_steps??0)*60)+"°":"No object";};
+$("objects").onchange=()=>{const e=world.getEntity($("objects").value);$("objectTags").value=e?.interaction_tags?.join(", ")??"";$("objectOrientation").textContent=e?((e.orientation_steps??0)*60)+"°":"No object";syncAppearance();};
 $("rotateObject").onclick=()=>{const e=world.getEntity($("objects").value);if(e){world.setEntityOrientation(e.id,((e.orientation_steps??0)+1)%6);syncConstruction();}};
 $("removeObject").onclick=()=>{playback.delete($("objects").value);world.removeEntity($("objects").value);syncConstruction();};
 
@@ -149,22 +149,36 @@ const tufts=new Map(catalog.vegetation.variants.map(v=>{
   for(let i=0;i<13;i++){const t=stableUnit(v.id,[i],"blade"),x=12+40*t,top=8+35*stableUnit(v.id,[i],"height");g.fillStyle="rgb("+v.color.map(n=>Math.round(n*255*(.7+t*.4))).join(",")+")";g.beginPath();g.moveTo(30+i%4,62);g.quadraticCurveTo(x,35,x,top);g.quadraticCurveTo(x+6,38,34+i%4,62);g.fill();}
   return [v.id,c];
 }));
+async function qualifyBinding(raw){
+  const binding=spriteBinding(raw),views=binding.views?Array.from({length:6},(_,i)=>directionalBinding(binding,i)):[directionalBinding(binding,0)];
+  const unique=new Map(views.map(v=>[v.asset,v]));
+  for(const v of unique.values()){
+    const states=[...new Set([v.walk_state,...(v.wind?.states??[]).map(w=>w.state)].filter(Boolean))];
+    const base=requestSprite({...v,...(binding.views&&v.state!==null?{requireState:true}:{})});
+    if(!await base.promise)throw Error(base.error);
+    for(const state of states){const alternate=requestSprite({...v,state,requireState:true});if(!await alternate.promise)throw Error(alternate.error);}
+  }
+  const next=await requestSprite(views[0]).promise;if(!next)throw Error("Sprite unavailable");
+  return {binding,next};
+}
 async function loadBinding(raw){
   const request=++spriteRequest;$("assetStatus").textContent="Loading sprite";
-  try{
-    const binding=spriteBinding(raw),views=binding.views?Array.from({length:6},(_,i)=>directionalBinding(binding,i)): [directionalBinding(binding,0)];
-    // Validate every explicit view and all declared alternate states before placement.
-    const unique=new Map(views.map(v=>[v.asset,v]));
-    for(const v of unique.values()){
-      const states=[...new Set([v.walk_state,...(v.wind?.states??[]).map(w=>w.state)].filter(Boolean))];
-      const base=requestSprite({...v,...(binding.views&&v.state!==null?{requireState:true}:{})});
-      if(!await base.promise)throw Error(base.error);
-      for(const state of states){const alternate=requestSprite({...v,state,requireState:true});if(!await alternate.promise)throw Error(alternate.error);}
-    }
-    const next=await requestSprite(views[0]).promise;
-    if(request!==spriteRequest)return;if(!next)throw Error("Sprite unavailable");actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";
-  }catch(e){if(request===spriteRequest){actor=null;$("assetStatus").textContent=e.message;}}
+  try{const {binding,next}=await qualifyBinding(raw);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";}
+  catch(e){if(request===spriteRequest){actor=null;$("assetStatus").textContent=e.message;}}
 }
+let appearanceRequest=0;
+function syncAppearance(){const e=world.getEntity($("objects").value);$("objectAppearance").value=JSON.stringify(e?visualSelection(e.visual):{},null,2);$("applyAppearance").disabled=!e;}
+$("applyAppearance").onclick=async()=>{
+  const id=$("objects").value,e=world.getEntity(id),request=++appearanceRequest,owner=world;if(!e)return;
+  try{const text=$("objectAppearance").value; if(text.length>32000)throw Error("Selection too large");
+    const selection=visualSelection(JSON.parse(text)),{preset,inputs,slots,...base}=e.visual;
+    $("appearanceStatus").textContent="Checking selected views";
+    await qualifyBinding({...base,...selection});
+    if(request!==appearanceRequest||world!==owner||!world.getEntity(id)||visualKey(world.getEntity(id).visual)!==visualKey(e.visual))return;
+    world.setEntityAppearance(id,selection);syncAppearance();$("appearanceStatus").textContent="Appearance applied";
+  }catch(err){if(request===appearanceRequest)$("appearanceStatus").textContent=err.message;}
+};
+$("loadChest").onclick=()=>loadBinding({manifest:"./examples/chest-fixture/manifest.json",asset:"fixture.chest",height_ft:3,preset:"closed"});
 function loadActor(){
   return loadBinding({manifest:$("manifest").value,asset:$("asset").value,state:$("actorState").value,height_ft:Number($("objectHeight").value),...(Number($("objectWindBend").value)>0||$("objectWindState").value.trim()?{wind:{bend:Number($("objectWindBend").value),reference_speed_ft_s:20,states:$("objectWindState").value.trim()?[{min_speed_ft_s:8,state:$("objectWindState").value.trim()}]:[]}}:{})});
 }

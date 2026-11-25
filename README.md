@@ -40,3 +40,6 @@ v0.17: per-material Atlas texture blending, full-color albedo, persistent climat
 
 
 v0.18: persistent object orientation and six-view Atlas bindings; seasonal default-manifest inheritance correction.
+
+
+v0.19: direct Atlas ZIP runtime loading, optional archive hash verification, fixed-canvas compositions with persistent visual input/slot/preset selections and a technical chest fixture.
