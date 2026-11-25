@@ -1,3 +1,5 @@
 Unmodified Visual Atlas renderer dependencies from https://github.com/Superior-MI-Labs/Superior-MI-Icon-Atlas/tree/8bef7107bf7cc7c1313e62c61aa391d6d7160051/web . Apache-2.0; see LICENSE. Update together from a pinned upstream revision; do not fork renderer semantics here. The tutorial character manifest and PNG under examples/atlas-character remain copied from revision 6e0ac9daec0b7c8c9b6367f18177e9acf39f6e3d, CC0-1.0 per its manifest. This renderer update inherits the upstream fractional-FPS loop-boundary correction. No production artwork or gameplay logic is implied.
 
 Collection resolver, shared ZIP reader and JSZip vendored without edits from Atlas f0621f06fa2b74cb56bed8e803e199b5c667951d (JSZip retains its upstream license notice). The existing renderer/slot/timeline/visual modules remain pinned to the audited renderer revision above.
+
+Unmodified interaction-core.js copied from Atlas b780bcb6f8b63c7c6d0fd72f1d6c5eea83655fce for canonical typed visual event dispatch.

@@ -6,6 +6,8 @@ import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle} from "./editor.
 import {project,pickFace,billboard,visibleTriangle} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask} from "./assets.mjs";
+import {ATLAS_CATALOG,fetchCatalog,searchCatalog} from "./catalog.mjs";
+import {appearanceOptions,dispatchAppearance} from "./asset-interactions.mjs";
 import {fetchStyle,vegetationSamples,vegetationRaster,vegetationWind} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection} from "./entities.mjs";
@@ -85,7 +87,37 @@ $("resetInteractions").onclick=()=>setInteractions(defaultInteractions);
 function showEvents(events){interactionEvents=events;const signals=events.flatMap(e=>e.signals.map(s=>s.signal));$("interactionStatus").textContent=events.length+" spatial events; "+(signals.join(", ")||"no matching signals");}
 $("setCellTags").onclick=()=>{try{const c=world.get(...selected);world.set(...selected,{...c,components:{...c.components,interaction_tags:parseTags($("cellTags").value)}});dirty=true;sync();}catch(e){$("interactionStatus").textContent=e.message;}};
 $("setObjectTags").onclick=()=>{try{world.setEntityTags($("objects").value,parseTags($("objectTags").value));syncConstruction();}catch(e){$("interactionStatus").textContent=e.message;}};
-function useSelected(targetId=null){try{const result=interactObject(world,$("movingObject").value,selected,movement,interactions,targetId);if(result.ok)showEvents(result.events);else $("interactionStatus").textContent=result.reason;}catch(e){$("interactionStatus").textContent=e.message;}}
+const usingObjects=new Set();
+async function useSelected(targetId=null){
+  const owner=world,actorId=$("movingObject").value,address=[...selected];
+  if(targetId&&usingObjects.has(targetId))return;
+  if(targetId)usingObjects.add(targetId);
+  try{
+    let result=interactObject(owner,actorId,address,movement,interactions,targetId);
+    if(!result.ok){$("interactionStatus").textContent=result.reason;return;}
+    const e=targetId?owner.getEntity(targetId):null;
+    let response=null;
+    if(e){
+      const {next}=await qualifyBinding(e.visual),contract=next.contract;
+      // Camera changes must not change the semantics of an object event.
+      if(e.visual.views&&contract.behavior?.on?.use){
+        for(const view of new Set(e.visual.views)){
+          const v=await requestSprite({...directionalBinding(e.visual,0),asset:view}).promise;
+          if(!v||!globalThis.VisualAtlasCollections.equivalent({inputs:v.contract.inputs,behavior:v.contract.behavior},{inputs:contract.inputs,behavior:contract.behavior}))throw Error("Directional use contracts disagree");
+        }
+      }
+      response=dispatchAppearance(contract,visualSelection(e.visual),"use");
+      if(response){const {inputs,slots,preset,...base}=e.visual;await qualifyBinding({...base,...response.selection});}
+      if(world!==owner||!owner.getEntity(targetId)||visualKey(owner.getEntity(targetId).visual)!==visualKey(e.visual))return;
+      result=interactObject(owner,actorId,address,movement,interactions,targetId);
+      if(!result.ok){$("interactionStatus").textContent=result.reason;return;}
+      if(response){owner.setEntityAppearance(targetId,response.selection);syncAppearance();}
+    }
+    showEvents(result.events);
+    if(response)$("interactionStatus").textContent+="; visual use applied"+(response.events.length?": "+response.events.map(x=>x.name).join(", "):"");
+  }catch(e){$("interactionStatus").textContent=e.message;}
+  finally{if(targetId)usingObjects.delete(targetId);}
+}
 $("useCell").onclick=()=>useSelected();$("useObject").onclick=()=>{if($("objects").value)useSelected($("objects").value);};
 const cutLevel=()=> $("cutaway").value==="all"?null:Number($("cutaway").value);
 let cutCenter=null;
@@ -166,8 +198,54 @@ async function loadBinding(raw){
   try{const {binding,next}=await qualifyBinding(raw);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";}
   catch(e){if(request===spriteRequest){actor=null;$("assetStatus").textContent=e.message;}}
 }
-let appearanceRequest=0;
-function syncAppearance(){const e=world.getEntity($("objects").value);$("objectAppearance").value=JSON.stringify(e?visualSelection(e.visual):{},null,2);$("applyAppearance").disabled=!e;}
+let appearanceRequest=0,appearanceKey=null,inspectRequest=0;
+function syncAppearance(){
+  const e=world.getEntity($("objects").value),key=e?e.id+":"+visualKey(e.visual):null;
+  $("applyAppearance").disabled=$("inspectAppearance").disabled=!e;
+  if(key===appearanceKey)return;
+  appearanceKey=key;inspectRequest++;$("objectAppearance").value=JSON.stringify(e?visualSelection(e.visual):{},null,2);$("appearanceControls").replaceChildren();
+  if(e)inspectAppearance(e);
+}
+async function inspectAppearance(e=world.getEntity($("objects").value)){
+  if(!e)return;const request=++inspectRequest,owner=world;
+  try{
+    const {next}=await qualifyBinding(e.visual);
+    if(request!==inspectRequest||world!==owner||$("objects").value!==e.id)return;
+    drawAppearanceControls(next.contract,visualSelection(e.visual));
+  }catch(err){if(request===inspectRequest)$("appearanceStatus").textContent=err.message;}
+}
+function drawAppearanceControls(contract,selection){
+  const host=$("appearanceControls");host.replaceChildren();
+  const options=appearanceOptions(contract,selection);if(!options)return;
+  const edit=(patch)=>{const next=visualSelection({...selection,...patch});$("objectAppearance").value=JSON.stringify(next,null,2);drawAppearanceControls(contract,next);};
+  const field=(name,el)=>{const label=document.createElement("label");label.append(name+" ",el);host.append(label);};
+  if(Object.keys(contract.presets).length){const el=document.createElement("select");el.id="generatedPreset";el.add(new Option("Default",""));for(const k of Object.keys(contract.presets))el.add(new Option(k,k));el.value=selection.preset??"";el.onchange=()=>edit({preset:el.value||null,inputs:{},slots:{}});field("Preset",el);}
+  for(const [key,def] of Object.entries(contract.inputs)){
+    let el;if(def.type==="enum"){el=document.createElement("select");for(const v of def.values)el.add(new Option(v,v));el.value=options.inputs[key];}
+    else{el=document.createElement("input");el.type=def.type==="boolean"?"checkbox":"number";if(def.type==="boolean")el.checked=options.inputs[key];else{el.value=options.inputs[key];if(def.min!==undefined)el.min=def.min;if(def.max!==undefined)el.max=def.max;el.step=def.step??"any";}}
+    el.dataset.visualInput=key;el.onchange=()=>edit({inputs:{...selection.inputs,[key]:def.type==="boolean"?el.checked:def.type==="number"?Number(el.value):el.value}});field(key,el);
+  }
+  for(const [key,slot] of Object.entries(contract.slots)){
+    const el=document.createElement("select");el.dataset.visualSlot=key;for(const v of slot.options)el.add(new Option(v,v));el.value=options.slots[key];el.onchange=()=>edit({slots:{...selection.slots,[key]:el.value}});field(key,el);
+  }
+  const info=document.createElement("p");info.textContent=contract.behavior?.on?.use?"Supports reach-checked world use":"No authored world-use event";host.append(info);
+}
+$("inspectAppearance").onclick=()=>inspectAppearance();
+let catalogEntries=[],catalogMatches=[],catalogRequest=0;
+function refreshCatalog(){
+  catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked);
+  const menu=$("catalogAssets");menu.replaceChildren(...catalogMatches.map((a,i)=>new Option(a.name+" · "+a.domain+" · "+a.license,String(i))));
+  $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=!catalogMatches.length;
+}
+$("refreshCatalog").onclick=async()=>{
+  const request=++catalogRequest;$("catalogStatus").textContent="Loading Atlas catalog";
+  try{const entries=await fetchCatalog($("catalogURL").value);if(request!==catalogRequest)return;catalogEntries=entries;
+    const menu=$("catalogCapability");menu.replaceChildren(new Option("All capabilities",""),...[...new Set(entries.flatMap(a=>a.capabilities))].sort().map(k=>new Option(k,k)));refreshCatalog();
+  }catch(e){if(request===catalogRequest)$("catalogStatus").textContent=e.message;}
+};
+for(const k of ["catalogSearch","catalogCapability","catalogComponents"])$(k).oninput=refreshCatalog;
+$("loadCatalogAsset").onclick=()=>{const a=catalogMatches[Number($("catalogAssets").value)];if(a)loadBinding({...a.binding,height_ft:Number($("objectHeight").value)});};
+
 $("applyAppearance").onclick=async()=>{
   const id=$("objects").value,e=world.getEntity(id),request=++appearanceRequest,owner=world;if(!e)return;
   try{const text=$("objectAppearance").value; if(text.length>32000)throw Error("Selection too large");
@@ -175,7 +253,7 @@ $("applyAppearance").onclick=async()=>{
     $("appearanceStatus").textContent="Checking selected views";
     await qualifyBinding({...base,...selection});
     if(request!==appearanceRequest||world!==owner||!world.getEntity(id)||visualKey(world.getEntity(id).visual)!==visualKey(e.visual))return;
-    world.setEntityAppearance(id,selection);syncAppearance();$("appearanceStatus").textContent="Appearance applied";
+    world.setEntityAppearance(id,selection);appearanceKey=null;syncAppearance();$("appearanceStatus").textContent="Appearance applied";
   }catch(err){if(request===appearanceRequest)$("appearanceStatus").textContent=err.message;}
 };
 $("loadChest").onclick=()=>loadBinding({manifest:"./examples/chest-fixture/manifest.json",asset:"fixture.chest",height_ft:3,preset:"closed"});

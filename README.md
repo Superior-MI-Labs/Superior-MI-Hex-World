@@ -43,3 +43,6 @@ v0.18: persistent object orientation and six-view Atlas bindings; seasonal defau
 
 
 v0.19: direct Atlas ZIP runtime loading, optional archive hash verification, fixed-canvas compositions with persistent visual input/slot/preset selections and a technical chest fixture.
+
+
+v0.20: published Atlas discovery, generated composition controls and reach-checked authored visual use.

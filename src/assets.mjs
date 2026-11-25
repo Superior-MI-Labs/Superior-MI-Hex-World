@@ -35,6 +35,7 @@ export function validateSpritePack(pack,entry){
       hasComposition=true;
       assert(size(a.size_px)&&Array.isArray(a.layers)&&a.layers.length>0&&a.layers.length<=128,"Invalid fixed world composition");
       const slotCore=globalThis.VisualAtlasSlots;assert(slotCore,"Missing Atlas slot resolver");
+      if(a.behavior!==undefined){const interaction=globalThis.VisualAtlasInteraction;assert(interaction,"Missing Atlas interaction resolver");const errors=interaction.check(a);assert(!errors.length,"Invalid Atlas behavior: "+errors[0]);}
       assert(a.inputs===undefined||a.inputs&&typeof a.inputs==="object"&&!Array.isArray(a.inputs)&&Object.keys(a.inputs).length<=64,"Invalid composition inputs");
       for(const def of Object.values(a.inputs??{}))assert(slotCore.accepts(def,def?.default),"Invalid composition input default");
       assert(a.duration_ms===undefined||Number.isInteger(a.duration_ms)&&a.duration_ms>0&&a.duration_ms<=600000,"Invalid composition duration");
@@ -111,7 +112,7 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest
   const renderer=globalThis.VisualAtlasRenderer.create({getAsset:id=>map.get(id),getImage,slots:globalThis.VisualAtlasSlots,timeline:globalThis.VisualAtlasTimeline,visualCore:globalThis.VisualAtlasVisualCore});
   const [w,h]=renderer.sizeFor(asset,new Set(),values,selection.preset,selection.slots);assert([w,h].every(v=>Number.isInteger(v)&&v>0&&v<=4096),"World sprite raster exceeds limit");const canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
   let revision=0,busy=false,last=-Infinity,pivot=[.5,1];
-  return {image:canvas,pixelWidth:w,pixelHeight:h,animated:root.kind!=="region",get pivot(){return pivot;},get revision(){return revision;},
+  return {image:canvas,pixelWidth:w,pixelHeight:h,animated:root.kind!=="region",contract:structuredClone({kind:root.kind,inputs:root.inputs??{},slots:root.slots??{},presets:root.presets??{},default_preset:root.default_preset,behavior:root.behavior}),get pivot(){return pivot;},get revision(){return revision;},
     async update(time){
       if(busy||(root.kind==="region"&&revision>0)||time-last<80)return false;busy=true;
       try{ctx.clearRect(0,0,w,h);await renderer.drawAsset(asset,ctx,0,0,w,h,time,values,state,new Set(),selection.slots,selection.preset);pivot=renderer.pivotFor(asset,time,state)??[.5,1];const out=canvas.getContext("2d");out.clearRect(0,0,w,h);out.drawImage(back,0,0);revision++;last=time;return true;}finally{busy=false;}

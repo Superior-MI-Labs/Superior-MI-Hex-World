@@ -189,7 +189,27 @@
             "equals": false
           }
         }
-      ]
+      ],
+      "behavior": {
+        "role": "generic",
+        "on": {
+          "use": [
+            {
+              "op": "toggle",
+              "input": "open"
+            },
+            {
+              "op": "emit",
+              "event": "chest_visual_changed"
+            }
+          ]
+        },
+        "outputs": {
+          "opened": {
+            "from_input": "open"
+          }
+        }
+      }
     }
   ]
 }
