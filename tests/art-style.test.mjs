@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
+import {createRequire} from "node:module";
+globalThis.VisualAtlasSlots=createRequire(import.meta.url)("../vendor/atlas/slot-core.js");
 import {validateStyle,vegetationSamples,resolveStyleProfile,loadStyle,fetchStyle,vegetationRaster,terrainTexturePlan,vegetationWind} from "../src/art-style.mjs";
 import {validateSpritePack} from "../src/assets.mjs";
 import {visibleTriangle} from "../src/camera.mjs";
