@@ -15,6 +15,7 @@ import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints
 import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
 import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettlement} from "./settlement.mjs";
 import {contactShadows} from "./lighting.mjs";
+import {objectVolumes} from "./collision.mjs";
 import {buildScatterPlan,promoteSample} from "./scatter.mjs";
 import {CALM,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend} from "./environment.mjs";
 import {validateInteractions,interactionTags,cellTarget,entityTarget,contactResponse,bendBillboard} from "./interactions.mjs";
@@ -28,6 +29,7 @@ const defaultInteractions=validateInteractions(await fetch("./examples/interacti
 let interactions=defaultInteractions;
 const catalog=validateMaterials(await fetch("./examples/materials.json").then(r=>{if(!r.ok)throw Error("Materials unavailable");return r.json();}));
 let scatterPlan=[],scatterDirty=true,scatterChoices=[],scatterChoiceKey="";
+let lastCollisionRevision=-1;
 let world,grid,clock=new Clock(base.simulation),yaw=0,last,drag=null,selected=[0,0,0],dirty=true,faces=[],handles=[],scale=24,panX=0,panY=50,meshCache;
 const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},(_,i)=>i-2).filter(r=>Math.max(Math.abs(q),Math.abs(r),Math.abs(q+r))<=2).map(r=>[q,r,0]));
 const islandDomain=island.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
@@ -149,7 +151,7 @@ function routeAction(commit){try{
     if($("animateWalk").checked&&points.length>1)playback.set(id,{points,path:result.path,stamp:routeGeometryStamp(world,result.path,movement),started:clock.visual});else playback.delete(id);
     syncConstruction();
   }
-  routePreview=commit?null:result.ok?{...result,points:routeWaypoints(world,result.path,movement)}:result;$("routeStatus").textContent=result.ok?(commit?"Moved: ":"Route: ")+(result.path.length-1)+" steps":result.reason;
+  routePreview=commit?null:result.ok?{...result,points:routeWaypoints(world,result.path,movement,{exclude:[id]})}:result;$("routeStatus").textContent=result.ok?(commit?"Moved: ":"Route: ")+(result.path.length-1)+" steps":result.reason;
 }catch(e){$("routeStatus").textContent=e.message;routePreview=null;}}
 $("previewRoute").onclick=()=>routeAction(false);$("moveObject").onclick=()=>routeAction(true);
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
@@ -169,11 +171,13 @@ function syncConstruction(){
   $("removeObject").disabled=$("setObjectTags").disabled=$("useObject").disabled=$("rotateObject").disabled=!items.length;
   $("objectOrientation").textContent=items.length?((world.getEntity(menu.value)?.orientation_steps??0)*60)+"°":"No object";
   $("objectTags").value=world.getEntity(menu.value)?.interaction_tags?.join(", ")??"";
-  syncAppearance();syncMovement();
+  syncCollider();syncAppearance();syncMovement();
 }
 for(const key of ["prefab","prefabRotation","prefabOffset"])$(key).onchange=syncConstruction;
 $("placePrefab").onclick=()=>{try{const {p,anchor,turns}=prefabPlan();if($("placePrefab").disabled)return;placePrefab(world,p,anchor,turns);dirty=true;sync();$("message").textContent=p.name+" placed";}catch(e){$("message").textContent=e.message;}};
-$("objects").onchange=()=>{const e=world.getEntity($("objects").value);$("objectTags").value=e?.interaction_tags?.join(", ")??"";$("objectOrientation").textContent=e?((e.orientation_steps??0)*60)+"°":"No object";syncAppearance();};
+$("objects").onchange=()=>{const e=world.getEntity($("objects").value);$("objectTags").value=e?.interaction_tags?.join(", ")??"";$("objectOrientation").textContent=e?((e.orientation_steps??0)*60)+"°":"No object";syncCollider();syncAppearance();};
+function syncCollider(){const e=world.getEntity($("objects").value),c=e?.collider;$("applyCollider").disabled=!e;$("colliderRadius").value=c?.radius_ft??0;$("colliderHeight").value=c?.height_ft??4;}
+$("applyCollider").onclick=()=>{try{const id=$("objects").value,r=Number($("colliderRadius").value),h=Number($("colliderHeight").value);world.setEntityCollider(id,r===0?null:{kind:"cylinder",radius_ft:r,height_ft:h});syncConstruction();$("colliderStatus").textContent=r===0?"Collider removed":"Collider applied";}catch(e){$("colliderStatus").textContent=e.message;}};
 $("rotateObject").onclick=()=>{const e=world.getEntity($("objects").value);if(e){world.setEntityOrientation(e.id,((e.orientation_steps??0)+1)%6);syncConstruction();}};
 $("removeObject").onclick=()=>{playback.delete($("objects").value);world.removeEntity($("objects").value);syncConstruction();};
 
@@ -388,6 +392,7 @@ $("resetView").onclick=()=>{yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
 canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=()=>drag=null;
 function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=ms;clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);refreshRegion();ctx.clearRect(0,0,900,450);
   if(dirty){scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
+  if(lastCollisionRevision!==world.collisionRevision){lastCollisionRevision=world.collisionRevision;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);}
   const sprites=[],seed=world.config.id,styled=art&&$("artStyle").checked,poses=new Map(),contacts=[];
   for(const [id,motion] of playback){const pose=sampleRoute(motion.points,(clock.visual-motion.started)*10);if(pose.done){playback.delete(id);continue;}poses.set(id,pose);contacts.push({id,point:pose.point});}
   let bent=0,windBent=0,animatedFoliage=0,seasonalFoliage=0;const field=world.environment,windEnabled=$("windVisual").checked,windCache=new Map(),climateCache=new Map(),updated=new Set();
@@ -468,6 +473,11 @@ function frame(ms){const dt=last===undefined?0:Math.min(.1,(ms-last)/1000);last=
       polygon(v.lower.slice(0,6).map(p=>projectLocal(e.address,p)),null,color);
     }
   }
+  if($("showColliders").checked)try{for(const c of objectVolumes(world)){
+    if(!displayedAddress(c.address))continue;
+    const ring=z=>Array.from({length:24},(_,i)=>view([c.center[0]+c.radius*Math.cos(i*Math.PI/12),c.center[1]+c.radius*Math.sin(i*Math.PI/12),z]));
+    const lower=ring(c.bottom),upper=ring(c.top);polygon(lower,null,"#f2b45c");polygon(upper,null,"#f2b45c");for(let i=0;i<24;i+=6){ctx.beginPath();ctx.moveTo(lower[i].x,lower[i].y);ctx.lineTo(upper[i].x,upper[i].y);ctx.strokeStyle="#f2b45c";ctx.stroke();}
+  }}catch(e){$("colliderStatus").textContent=e.message;}
   const v=vertices(get(),grid),key=activeFace();
   handles=refs().map(h=>({...h,...projectLocal(selected,v[h.layer][h.index])}));
   // Outline the logical control face even when a neighboring cell clips it.

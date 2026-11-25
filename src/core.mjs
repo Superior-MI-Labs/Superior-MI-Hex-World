@@ -51,13 +51,14 @@ function validateScatterKeys(keys){
   requireThat(Array.isArray(keys)&&keys.length<=512&&keys.every(k=>typeof k==="string"&&k.length>0&&k.length<=4096)&&new Set(keys).size===keys.length,"Invalid scatter suppression keys");return [...keys].sort();
 }
 export class World {
-  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map(); #effects=new Map(); #clockState=null;
+  #config; #chunks=new Map(); #revision=0; #burning=new Set(); #burningDefaults=new Set(); #entities=new Map(); #collisionRevision=0; #effects=new Map(); #clockState=null;
   constructor(config){this.#config=validateWorld(config);}
   get config(){return copy(this.#config);}
   get environment(){return validateEnvironment(this.#config.environment);}
   setEnvironment(value){this.#config.environment=validateEnvironment(value);}
   get chunkCount(){return this.#chunks.size;}
   get entityCount(){return this.#entities.size;}
+  get collisionRevision(){return this.#collisionRevision;}
   effects(){return [...this.#effects.values()].map(copy);}
   putEffect(value){const e=validatePlacedEffect(value);requireThat(this.get(...e.address),"Unknown effect cell");requireThat(!this.#effects.has(e.id),"Duplicate effect ID");this.#effects.set(e.id,e);}
   removeEffect(id){return this.#effects.delete(id);}
@@ -65,14 +66,15 @@ export class World {
   get clockState(){return this.#clockState?copy(this.#clockState):null;}
   entities(){return [...this.#entities.values()].map(copy);}
   getEntity(id){const value=this.#entities.get(id);return value&&copy(value);}
-  putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);}
-  removeEntity(id){return this.#entities.delete(id);}
+  putEntity(value){const e=validateEntity(value);requireThat(this.get(...e.address),"Unknown entity cell");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");this.#entities.set(e.id,e);if(e.collider)this.#collisionRevision++;}
+  removeEntity(id){const old=this.#entities.get(id),removed=this.#entities.delete(id);if(old?.collider)this.#collisionRevision++;return removed;}
+  setEntityCollider(id,collider){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const {collider:previous,...rest}=old,next=validateEntity(collider===null?rest:{...rest,collider});this.#entities.set(id,next);if(JSON.stringify(previous)!==JSON.stringify(next.collider))this.#collisionRevision++;}
   promoteScatter(key,value){
     const e=validateEntity(value),c=this.get(...e.address);requireThat(c&&e.anchor==="surface"&&anchorHeight(e,c,this.#config.grid)!==undefined,"Scatter needs supporting terrain");requireThat(!this.#entities.has(e.id),"Duplicate entity ID");
     const hidden=c.components?.scatter_hidden??[];requireThat(!hidden.includes(key),"Scatter already promoted");
     const keys=validateScatterKeys([...hidden,key]);
     // Both records are validated before the synchronous commit; no partial entity on failure.
-    this.set(...e.address,{...c,components:{...c.components,scatter_hidden:keys}});this.#entities.set(e.id,e);
+    this.set(...e.address,{...c,components:{...c.components,scatter_hidden:keys}});this.#entities.set(e.id,e);if(e.collider)this.#collisionRevision++;
   }
   setEntityAppearance(id,selection){
     const e=this.#entities.get(id);requireThat(e,"Unknown entity");
@@ -81,7 +83,7 @@ export class World {
   }
   setEntityOrientation(id,orientation_steps){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,orientation_steps}));}
   setEntityTags(id,tags){const e=this.#entities.get(id);requireThat(e,"Unknown entity");this.#entities.set(id,validateEntity({...e,interaction_tags:tags}));}
-  relocateEntity(id,address){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const next=validateEntity({...old,address});requireThat(this.get(...next.address),"Unknown entity cell");this.#entities.set(id,next);}
+  relocateEntity(id,address){const old=this.#entities.get(id);requireThat(old,"Unknown entity");const next=validateEntity({...old,address});requireThat(this.get(...next.address),"Unknown entity cell");this.#entities.set(id,next);if(old.collider&&old.address.some((v,i)=>v!==address[i]))this.#collisionRevision++;}
   #location(q,r,z){const {chunk,local}=chunkOf(q,r,z,this.#config.grid.chunk_size);return [addressKey(...chunk),addressKey(...local)];}
   defineChunk(cq,cr,cz,defaultCell={material:"air",shape:uniformShape(0)}){
     const key=addressKey(cq,cr,cz);requireThat(!this.#chunks.has(key),"Chunk already defined");

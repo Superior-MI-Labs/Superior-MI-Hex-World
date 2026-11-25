@@ -32,13 +32,19 @@ export function spriteBinding(b){
   assert(b.archive_sha256===undefined||typeof b.archive_sha256==="string"&&/^[a-f0-9]{64}$/.test(b.archive_sha256)&&url.pathname.toLowerCase().endsWith(".zip"),"Invalid archive digest");
   return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.archive_sha256?{archive_sha256:b.archive_sha256}:{}),...visualSelection(b),...(b.views!==undefined?{views:[...b.views]}:{}),...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
 }
+// Physical geometry belongs to the host, independent of sprite dimensions.
+export function validateCollider(c){
+  assert(c&&c.kind==="cylinder"&&Number.isFinite(c.radius_ft)&&c.radius_ft>=.05&&c.radius_ft<=20&&Number.isFinite(c.height_ft)&&c.height_ft>=.05&&c.height_ft<=100,"Invalid object collider");
+  return {kind:"cylinder",radius_ft:c.radius_ft,height_ft:c.height_ft};
+}
 export function validateEntity(e){
   assert(e&&id(e.id)&&validAddress(e.address),"Invalid entity");
   assert(e.anchor==="surface"||e.anchor==="cell","Invalid anchor");
   const offset=e.offset_ft??[0,0,0];
   assert(Array.isArray(offset)&&offset.length===3&&offset.every(v=>Number.isFinite(v)&&Math.abs(v)<=100),"Invalid entity offset");
   assert(e.orientation_steps===undefined||(Number.isInteger(e.orientation_steps)&&e.orientation_steps>=0&&e.orientation_steps<6),"Invalid object orientation");
-  return {...structuredClone(e),address:[...e.address],offset_ft:[...offset],...(e.orientation_steps!==undefined?{orientation_steps:e.orientation_steps}:{}),visual:spriteBinding(e.visual),...(e.interaction_tags!==undefined?{interaction_tags:interactionTags(e.interaction_tags)}:{})};
+  const collider=e.collider===undefined?{}:{collider:validateCollider(e.collider)};
+  return {...structuredClone(e),...collider,address:[...e.address],offset_ft:[...offset],...(e.orientation_steps!==undefined?{orientation_steps:e.orientation_steps}:{}),visual:spriteBinding(e.visual),...(e.interaction_tags!==undefined?{interaction_tags:interactionTags(e.interaction_tags)}:{})};
 }
 // Surface anchored objects follow terrain edits; if their support is removed,
 // they remain saved but unresolved. Gravity/collision belong to later systems.

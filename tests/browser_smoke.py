@@ -420,6 +420,16 @@ with sync_playwright() as p:
     assert len(saved["entities"])==2
     assert any(key in c["value"].get("components",{}).get("scatter_hidden",[]) for chunk in saved["chunks"] for c in chunk["cells"])
     page.locator("#objects").select_option(index=1)
+    page.locator("#colliderRadius").fill("1.25")
+    page.locator("#colliderHeight").fill("3")
+    page.locator("#applyCollider").click()
+    assert page.locator("#colliderStatus").text_content()=="Collider applied"
+    page.locator("#showColliders").check()
+    with page.expect_download() as physical_save:
+        page.locator("#save").click()
+    physical=json.loads(Path(physical_save.value.path()).read_text())
+    assert next(e for e in physical["entities"] if e["id"]!="demo-actor")["collider"]=={"kind":"cylinder","radius_ft":1.25,"height_ft":3}
+    page.locator("#showColliders").uncheck()
     page.locator("#removeObject").click()
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===1&&s.scatter_candidates===n-1}",arg=count)
     assert not errors,errors

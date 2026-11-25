@@ -2,6 +2,7 @@
 import {physicalPosition} from "./core.mjs";
 import {validAddress,anchorHeight} from "./entities.mjs";
 import {routeInteractions,useInteraction} from "./interactions.mjs";
+import {objectVolumes,firstObjectBlock} from "./collision.mjs";
 import {EDGE_NEIGHBORS,oppositeEdge,vertices,sampleSurface} from "./geometry.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const EPS=1e-8;
@@ -9,6 +10,7 @@ export function validateMovement(p){
   assert(p?.schema==="smi-hex-movement/1","Invalid movement profile");
   assert(Number.isFinite(p.height_ft)&&p.height_ft>0&&p.height_ft<=30&&Number.isFinite(p.max_step_ft)&&p.max_step_ft>=0&&p.max_step_ft<=20&&Number.isFinite(p.max_grade)&&p.max_grade>=0&&p.max_grade<=4,"Invalid movement dimensions");
   assert(Number.isInteger(p.max_nodes)&&p.max_nodes>=1&&p.max_nodes<=4096,"Invalid search budget");
+  assert(p.radius_ft===undefined||Number.isFinite(p.radius_ft)&&p.radius_ft>=0&&p.radius_ft<=5,"Invalid movement radius");
   return structuredClone(p);
 }
 const mix=(a,b,t)=>a+(b-a)*t;
@@ -58,15 +60,18 @@ function support(world,grid,address,edge){
   }
   return {points:[center,boundary],feet:[a[1],b[1]]};
 }
-export function standability(world,address,profile){
-  const p=validateMovement(profile),g=world.config.grid;
+const worldPoint=(address,xy,height,g)=>{const o=physicalPosition(...address,g);return [o.x+xy[0],o.y+xy[1],height];};
+function standing(world,g,address,p,volumes){
   assert(validAddress(address),"Invalid standing address");
   const s=support(world,g,address);
   if(!s)return {ok:false,reason:"no known support"};
   const reason=headroom(world,g,address,s.points,s.feet,s.feet.map(v=>v+p.height_ft));
-  return reason?{ok:false,reason}:{ok:true,height_ft:s.feet[0]};
+  if(reason)return {ok:false,reason};
+  const point=worldPoint(address,s.points[0],s.feet[0],g),block=firstObjectBlock(volumes,point,point,p);
+  return block?{ok:false,reason:"blocked object",object_id:block}:{ok:true,height_ft:s.feet[0]};
 }
-function step(world,g,from,to,p){
+export function standability(world,address,profile,{exclude=[]}={}){return standing(world,world.config.grid,address,validateMovement(profile),objectVolumes(world,{exclude}));}
+function step(world,g,from,to,p,volumes){
   const e=EDGE_NEIGHBORS.findIndex(([q,r])=>from[0]+q===to[0]&&from[1]+r===to[1]);
   if(e<0)return {ok:false,reason:"not a horizontal neighbor"};
   const a=support(world,g,from,e),b=support(world,g,to,oppositeEdge(e));
@@ -79,17 +84,19 @@ function step(world,g,from,to,p){
     if(!reason)reason=headroom(world,g,address,[s.points[1],s.points[1]],[s.feet[1],s.feet[1]],Array(2).fill(Math.max(edgeA,edgeB)+p.height_ft));
     if(reason)return {ok:false,reason};
   }
+  const points=[worldPoint(from,a.points[0],a.feet[0],g),worldPoint(from,a.points[1],edgeA,g),worldPoint(to,b.points[1],edgeB,g),worldPoint(to,b.points[0],b.feet[0],g)];
+  for(let i=1;i<points.length;i++){const block=firstObjectBlock(volumes,points[i-1],points[i],p);if(block)return {ok:false,reason:"blocked object",object_id:block};}
   return {ok:true,rise_ft:rise};
 }
-export function walkStep(world,from,to,profile){
+export function walkStep(world,from,to,profile,{exclude=[]}={}){
   assert(validAddress(from)&&validAddress(to),"Invalid walking address");
-  return step(world,world.config.grid,from,to,validateMovement(profile));
+  return step(world,world.config.grid,from,to,validateMovement(profile),objectVolumes(world,{exclude}));
 }
 // Breadth-first search minimizes cell steps. Unknown regions are not traversable.
-export function findRoute(world,from,to,profile){
+export function findRoute(world,from,to,profile,{exclude=[]}={}){
   assert(validAddress(from)&&validAddress(to),"Invalid route address");
   const p=validateMovement(profile),g=world.config.grid;
-  const start=standability(world,from,p),end=standability(world,to,p);
+  const volumes=objectVolumes(world,{exclude}),start=standing(world,g,from,p,volumes),end=standing(world,g,to,p,volumes);
   if(!start.ok||!end.ok)return {ok:false,reason:!start.ok?"Start: "+start.reason:"Destination: "+end.reason,visited:0,path:[]};
   const queue=[from],previous=new Map([[key(from),null]]),target=key(to);
   const levels=Math.ceil(p.max_step_ft/g.vertical_ft)+1;
@@ -98,7 +105,7 @@ export function findRoute(world,from,to,profile){
     if(k===target){const path=[];for(let at=k;at!==null;at=previous.get(at))path.push(at.split(",").map(Number));return {ok:true,path:path.reverse(),visited:previous.size};}
     for(const [dq,dr] of EDGE_NEIGHBORS)for(let dz=-levels;dz<=levels;dz++){
       const b=[a[0]+dq,a[1]+dr,a[2]+dz],bk=key(b);
-      if(!validAddress(b)||previous.has(bk)||!step(world,g,a,b,p).ok)continue;
+      if(!validAddress(b)||previous.has(bk)||!step(world,g,a,b,p,volumes).ok)continue;
       if(previous.size>=p.max_nodes)continue;
       previous.set(bk,k);queue.push(b);
     }
@@ -109,13 +116,13 @@ export function planObjectMove(world,id,to,profile){
   const e=world.getEntity(id);assert(e,"Unknown object");
   assert(e.anchor==="surface"&&e.offset_ft.every(v=>v===0),"Walking requires a centered surface anchor");
   assert(anchorHeight(e,world.get(...e.address),world.config.grid)!==undefined,"Object has no support");
-  return findRoute(world,e.address,to,profile);
+  return findRoute(world,e.address,to,profile,{exclude:[id]});
 }
 export function moveObject(world,id,to,profile,{interactions=null,presentation=false}={}){
   const route=planObjectMove(world,id,to,profile);
   if(!route.ok)return route;
   const events=interactions?routeInteractions(world,id,route.path,interactions):[];
-  const points=presentation?routeWaypoints(world,route.path,profile):undefined;
+  const points=presentation?routeWaypoints(world,route.path,profile,{exclude:[id]}):undefined;
   world.relocateEntity(id,to);
   return {...route,...(interactions?{events}:{}),...(presentation?{points}:{})};
 }
@@ -125,14 +132,15 @@ export function interactObject(world,id,address,profile,interactions,targetId=nu
   assert(actor.anchor==="surface"&&actor.offset_ft.every(v=>v===0),"Interaction requires centered surface actor");
   const p=validateMovement(profile),g=world.config.grid;
   const same=actor.address.every((v,i)=>v===address[i]);
-  const reachable=same?standability(world,address,p):step(world,g,actor.address,address,p);
+  const volumes=objectVolumes(world,{exclude:targetId?[id,targetId]:[id]});
+  const reachable=same?standing(world,g,address,p,volumes):step(world,g,actor.address,address,p,volumes);
   if(!reachable.ok)return {ok:false,reason:"Target outside reachable interaction range",events:[]};
   return {ok:true,events:[useInteraction(world,id,address,interactions,targetId)]};
 }
 
 // Presentation follows the same center/edge points as validated walking.
 // The committed entity address remains final even during visual playback.
-export function routeWaypoints(world,path,profile){
+export function routeWaypoints(world,path,profile,{exclude=[]}={}){
   const p=validateMovement(profile),g=world.config.grid;
   if(!Array.isArray(path)||!path.length)throw Error("Empty route");
   const out=[];
@@ -141,9 +149,9 @@ export function routeWaypoints(world,path,profile){
     if(last&&last.address.every((v,i)=>v===address[i])&&Math.hypot(...point.map((v,i)=>v-last.point[i]))<EPS)return;
     out.push({address:[...address],point});
   }
-  const first=standability(world,path[0],p);assert(first.ok,"Invalid route support");add(path[0],[0,0],first.height_ft);
+  const volumes=objectVolumes(world,{exclude}),first=standing(world,g,path[0],p,volumes);assert(first.ok,"Invalid route support");add(path[0],[0,0],first.height_ft);
   for(let i=1;i<path.length;i++){
-    const a=path[i-1],b=path[i];assert(step(world,g,a,b,p).ok,"Route is no longer traversable");
+    const a=path[i-1],b=path[i];assert(step(world,g,a,b,p,volumes).ok,"Route is no longer traversable");
     const e=EDGE_NEIGHBORS.findIndex(([q,r])=>a[0]+q===b[0]&&a[1]+r===b[1]),sa=support(world,g,a,e),sb=support(world,g,b,oppositeEdge(e));
     add(a,sa.points[1],sa.feet[1]);add(b,sb.points[1],sb.feet[1]);add(b,[0,0],sb.feet[0]);
   }
@@ -169,5 +177,5 @@ export function routeGeometryStamp(world,path,profile){
   for(const [q,r,z] of path)for(let dz=-1;dz<=above;dz++){
     const level=z+dz;if(Number.isSafeInteger(level))revisions.push(world.geometryRevisionAt(q,r,level));
   }
-  return revisions.join("|");
+  return world.collisionRevision+"|"+revisions.join("|");
 }

@@ -55,3 +55,6 @@ v0.22: deterministic multi-family decorative scatter, canonical spatial asset ad
 
 
 v0.23: stable same-level scatter spacing and explicit persistent object promotion with saved suppression.
+
+
+v0.24: explicit persistent cylindrical object colliders, swept walking queries and collider editor diagnostics.
