@@ -11,6 +11,9 @@ with sync_playwright() as p:
     page.on("pageerror",lambda e: errors.append(str(e)))
     page.goto("http://127.0.0.1:8000/")
     page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg")==30
+    page.locator("#cameraAlignment").select_option("0")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg===0")
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).atlas_sprite")
     # Directional fixture uses existing measured grass regions as view IDs, not authored view art.
@@ -472,6 +475,7 @@ with sync_playwright() as p:
     # Fresh island, guaranteed visible scatter fixture. Explicit promotion must save
     # an entity and suppress exactly one decorative sample, even after deletion.
     page.goto("http://127.0.0.1:8000/")
+    page.locator("#cameraAlignment").select_option("0")
     page.wait_for_function("document.querySelector('#artStatus').textContent === 'Atlas meadow fixture loaded'")
     promotion_style=json.loads(Path("examples/meadow-style.json").read_text())
     promotion_style["id"]="promotion-browser-fixture"
@@ -547,6 +551,7 @@ with sync_playwright() as p:
     assert json.loads(Path(flow_save.value.path()).read_text())["world"]["environment"]["water_simulation"] is True
     # Verify keyboard controls and actual batch edits through pointer selection.
     page.goto("http://127.0.0.1:8000/")
+    page.locator("#cameraAlignment").select_option("0")
     page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_mode==='island'")
     scene=page.locator("#scene")
@@ -635,6 +640,20 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.waypoints===1")
     page.locator("#clearWaypoints").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.waypoints===0")
+    # Front/back alignment changes only the camera. Picking uses the actual view.
+    page.locator("#cameraAlignment").select_option("30")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg===30")
+    page.locator("#resetView").click()
+    scene.scroll_into_view_if_needed()
+    box=scene.bounding_box()
+    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');const s=JSON.parse(document.querySelector('#status').textContent);return project([5,0,2.5],s.camera);}""")
+    page.mouse.click(*screen(xy))
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='1,0,0'")
+    scene.focus()
+    page.keyboard.press("e")
+    page.wait_for_function("(()=>{const c=JSON.parse(document.querySelector('#status').textContent).camera;return c.yaw===1&&!c.rotating&&c.alignment_deg===30})()")
+    page.locator("#cameraAlignment").select_option("0")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg===0")
     assert not errors,errors
-    print("GPU depth, Atlas sprite load, scatter promotion, multi-selection, keyboard camera, brush plan replay, object brush, context and procedural controls passed")
+    print("GPU depth, Atlas sprite load, scatter promotion, multi-selection, keyboard camera, brush plan replay, object brush, context, procedural controls and front/back alignment passed")
     browser.close()

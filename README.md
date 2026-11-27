@@ -88,3 +88,6 @@ v0.33: mixed terrain/object edit plans, reversible object placement and paint/er
 
 
 v0.34: reviewed road/river paths, grading, seeded multi-asset groves and journaled object properties.
+
+
+v0.35: default front/back hex-edge camera alignment with original-view toggle.

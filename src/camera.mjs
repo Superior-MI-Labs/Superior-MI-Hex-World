@@ -1,6 +1,8 @@
 // Orthographic projection shared by GPU, editor handles and CPU picking.
-export function project([x,y,z],{yaw=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
-  const a=yaw*Math.PI/3,c=Math.cos(a),s=Math.sin(a),v=x*s+y*c;
+// Alignment is presentation only; logical yaw still indexes six authored views.
+export const cameraAngle=(yaw,alignment_deg=0)=>(yaw*60+alignment_deg)*Math.PI/180;
+export function project([x,y,z],{yaw=0,alignment_deg=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
+  const a=cameraAngle(yaw,alignment_deg),c=Math.cos(a),s=Math.sin(a),v=x*s+y*c;
   return {x:width/2+panX+scale*(x*c-y*s),y:height/2+panY+scale*(v/Math.sqrt(3)-z*Math.sqrt(2/3)),depth:v*Math.sqrt(2/3)+z/Math.sqrt(3)};
 }
 export function pickFace(faces,x,y,view){
@@ -16,8 +18,8 @@ export function pickFace(faces,x,y,view){
   }
   return best;
 }
-export function billboard([x,y,z],yaw,width,height,pivot=[.5,1]){
-  const a=yaw*Math.PI/3,right=[Math.cos(a),-Math.sin(a)],left=-width*pivot[0],top=height*pivot[1];
+export function billboard([x,y,z],yaw,width,height,pivot=[.5,1],alignment_deg=0){
+  const a=cameraAngle(yaw,alignment_deg),right=[Math.cos(a),-Math.sin(a)],left=-width*pivot[0],top=height*pivot[1];
   const at=(u,v)=>[x+right[0]*u,y+right[1]*u,z+v];
   return [at(left,top),at(left+width,top),at(left+width,top-height),at(left,top-height)];
 }
@@ -29,10 +31,10 @@ export function visibleTriangle(face,view,width,height,padding=0){
 }
 
 // Inverse of the orthographic projection on a specified world-height plane.
-export function unprojectPlane(x,y,z,{yaw=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
+export function unprojectPlane(x,y,z,{yaw=0,alignment_deg=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
   if(!Number.isFinite(scale)||scale<=0)throw Error("Invalid camera scale");
   const u=(x-width/2-panX)/scale,v=((y-height/2-panY)/scale+z*Math.sqrt(2/3))*Math.sqrt(3);
-  const a=yaw*Math.PI/3,c=Math.cos(a),s=Math.sin(a);
+  const a=cameraAngle(yaw,alignment_deg),c=Math.cos(a),s=Math.sin(a);
   return [u*c+v*s,-u*s+v*c,z];
 }
 
