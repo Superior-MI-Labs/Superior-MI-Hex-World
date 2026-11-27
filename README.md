@@ -91,3 +91,6 @@ v0.34: reviewed road/river paths, grading, seeded multi-asset groves and journal
 
 
 v0.35: default front/back hex-edge camera alignment with original-view toggle.
+
+
+See [the Hex World × Visual Atlas integration roadmap](docs/ROADMAP.md) for the next production milestones and shared asset compatibility contract.

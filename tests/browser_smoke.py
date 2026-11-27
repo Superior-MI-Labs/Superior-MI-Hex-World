@@ -640,15 +640,22 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.waypoints===1")
     page.locator("#clearWaypoints").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.waypoints===0")
-    # Front/back alignment changes only the camera. Picking uses the actual view.
+    # Exercise the new projection on known flat terrain, independently of
+    # previous brush modifications and selected vertex handles.
     page.locator("#cameraAlignment").select_option("30")
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg===30")
+    page.locator("#brushRadius").select_option("0")
+    page.locator("#paintTool").select_option("select")
+    page.get_by_role("button",name="Reset terrain").click()
     page.locator("#resetView").click()
+    page.wait_for_function("""()=>{const s=JSON.parse(document.querySelector('#status').textContent),c=s.camera;return c.alignment_deg===30&&c.yaw===0&&!c.rotating&&c.scale===24&&c.panX===0&&c.panY===50&&s.selected.join(',')==='0,0,0'&&s.cell.shape.upper.every(v=>v===2)&&s.builder.history.undo===0}""")
     scene.scroll_into_view_if_needed()
     box=scene.bounding_box()
-    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');const s=JSON.parse(document.querySelector('#status').textContent);return project([5,0,2.5],s.camera);}""")
+    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');const s=JSON.parse(document.querySelector('#status').textContent);return project([5,0,5],s.camera);}""")
+    # Modified click bypasses the active vertex handles and adds the neighbor.
+    page.keyboard.down("Shift")
     page.mouse.click(*screen(xy))
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='1,0,0'")
+    page.keyboard.up("Shift")
+    page.wait_for_function("(()=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.selected.join(',')==='1,0,0'&&s.selection.length===2})()")
     scene.focus()
     page.keyboard.press("e")
     page.wait_for_function("(()=>{const c=JSON.parse(document.querySelector('#status').textContent).camera;return c.yaw===1&&!c.rotating&&c.alignment_deg===30})()")

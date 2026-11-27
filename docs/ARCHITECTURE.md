@@ -1,4 +1,4 @@
-# Foundation contract (v0.32)
+# Foundation contract (v0.35)
 This independent repository supersedes the height-only Tabletop prototype direction, not its existing implementation. Reference: https://github.com/Superior-MI-Labs/Interactive-Tabletop/blob/agent/hex-world-terrain-elevation-and-world-contract-20261125/HEX_WORLD_CONTRACT.md . Retain axial math and fixed 35.264 degree isometric projection with six yaw directions. Unlike the prototype, all ordinary interiors, caves and buildings share Q/R/Z; portals only for intentionally separate spaces.
 
 ## Authority
@@ -122,3 +122,6 @@ One bounded pure planning module generates ordinary smi-hex-edit-plan/1 records:
 
 ## Camera alignment (v0.35)
 The lab defaults to a +30 degree camera-only alignment, placing opposite hex edge normals along the screen front/back axis at all six discrete yaw stops. The original 0 degree alignment remains selectable. Projection, inverse projection, billboard orientation, viewport bounds and cache keys share the same angle convention. Logical yaw steps, quarter-second interpolation, axial coordinates, geometry, simulation and save formats are unchanged. Directional Atlas asset selection retains its existing logical six-view indexing; asymmetric sprites authored for the old physical viewing angles are approximate under the new alignment and may need a future explicitly authored angle profile. No Atlas format or artwork IDs changed.
+
+## Forward integration roadmap
+The [current integration roadmap](ROADMAP.md) supersedes older milestone-local statements about what remains future work. Prefer exact-release qualification and a production environment pilot over further speculative engine expansion. Camera alignment is host-only; do not relabel old directional artwork as newly authored views.
