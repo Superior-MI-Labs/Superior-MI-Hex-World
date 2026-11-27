@@ -7,6 +7,7 @@ import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,s
 import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing,planWeatherExposure} from "./builder.mjs";
 import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys,viewportSize} from "./camera.mjs";
 import {bindWorkspace} from "./workspace.mjs";
+import {bindCatalogView} from "./catalog-view.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {FrameSamples} from "./profiling.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding,AnimationPhasePool} from "./assets.mjs";
@@ -330,14 +331,14 @@ function drawAppearanceControls(contract,selection){
   const info=document.createElement("p");info.textContent=contract.behavior?.on?.use?"Supports reach-checked world use":"No authored world-use event";host.append(info);
 }
 $("inspectAppearance").onclick=()=>inspectAppearance();
-let catalogEntries=[],catalogMatches=[],catalogRequest=0;
+let catalogEntries=[],catalogMatches=[],catalogRequest=0;const catalogView=bindCatalogView();
 const browseMenus={category_path:"catalogCategory",perspective:"catalogPerspective",theme:"catalogTheme",medium:"catalogMedium",family:"catalogFamily"};
 function refreshCatalog(){
   const browse=Object.fromEntries(Object.entries(browseMenus).map(([k,id])=>[k,$(id).value]));
   catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked,$("catalogDomain").value,browse);
   const menu=$("catalogAssets"),previous=menu.value;menu.replaceChildren(...catalogMatches.map(a=>new Option(a.name+" · "+a.domain+(a.family?" · "+a.family:"")+" · "+a.license+" · art review: "+a.visual_qa,a.id)));
   if(catalogMatches.some(a=>a.id===previous))menu.value=previous;
-  $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=!catalogMatches.length;
+  $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=!catalogMatches.length;catalogView.update(catalogMatches);
 }
 $("refreshCatalog").onclick=async()=>{
   const request=++catalogRequest;$("catalogStatus").textContent="Loading Atlas catalog";

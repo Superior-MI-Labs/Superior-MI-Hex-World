@@ -24,3 +24,8 @@ test("Atlas projected taxonomy combines exact category, perspective, medium and 
  assert.equal(searchCatalog(entries,"","",false,"",{category_path:"world.props"}).length,0);
  assert.deepEqual(catalogBrowseOptions(resolveCatalog(index,url)).category_path,[]);
 });
+
+test("safe Atlas preview paths and authored metadata are projected without changing bindings",()=>{
+ const digest="c".repeat(64),assets=[{id:"pine",pack:"p",name:"Conifer",tags:["evergreen"],subjects:["woodland"],aliases:["pine tree"],style:"fantasy",thumbnail:"previews/"+digest+".png"},{id:"external",pack:"p",thumbnail:"https://other.test/track.png"},{id:"escape",pack:"p",thumbnail:"../previews/"+digest+".png"}];
+ const entries=resolveCatalog({...index,assets},url);assert.equal(entries[0].thumbnail,"https://example.org/atlas/previews/"+digest+".png");assert.equal(entries[1].thumbnail,null);assert.equal(entries[2].thumbnail,null);assert.equal(searchCatalog(entries,"fantasy evergreen pine").length,1);assert.equal(entries[0].binding.archive_sha256,"a".repeat(64));
+});
