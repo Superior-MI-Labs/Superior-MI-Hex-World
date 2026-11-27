@@ -17,7 +17,7 @@ export function resolveCatalog(index,reference){
     if(a.legacy||!packs.has(a.pack)||a.discovery==="hidden")continue;
     assert(typeof a.id==="string"&&!seen.has(a.id),"Duplicate catalog asset");seen.add(a.id);
     const binding=spriteBinding({...packs.get(a.pack),asset:a.id});
-    entries.push({id:a.id,name:String(a.name??a.id),domain:String(a.domain??""),kind:a.kind,license:String(a.license??""),discovery:a.discovery??"standalone",capabilities:Array.isArray(a.capabilities)?a.capabilities.filter(x=>typeof x==="string"):[],binding});
+    entries.push({id:a.id,pack:a.pack,visual_qa:a.visual_qa??"unknown",name:String(a.name??a.id),domain:String(a.domain??""),kind:a.kind,license:String(a.license??""),discovery:a.discovery??"standalone",capabilities:Array.isArray(a.capabilities)?a.capabilities.filter(x=>typeof x==="string"):[],binding});
   }
   return entries;
 }
@@ -29,7 +29,7 @@ export async function fetchCatalog(reference=ATLAS_CATALOG,fetcher=fetch){
   catch(e){await reader.cancel();throw e;}
   return resolveCatalog(JSON.parse(content),url.href);
 }
-export function searchCatalog(entries,query="",capability="",components=false){
+export function searchCatalog(entries,query="",capability="",components=false,domain=""){
   const terms=query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  return entries.filter(a=>(components||a.discovery==="standalone")&&(!capability||a.capabilities.includes(capability))&&terms.every(t=>[a.id,a.name,a.domain,...a.capabilities].join(" ").toLowerCase().includes(t))).slice(0,200);
+  return entries.filter(a=>(components||a.discovery==="standalone")&&(!domain||a.domain===domain)&&(!capability||a.capabilities.includes(capability))&&terms.every(t=>[a.id,a.name,a.domain,...a.capabilities].join(" ").toLowerCase().includes(t))).slice(0,200);
 }

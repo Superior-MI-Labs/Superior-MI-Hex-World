@@ -10,7 +10,7 @@ import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
 import {ATLAS_CATALOG,fetchCatalog,searchCatalog} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
-import {fetchStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
+import {fetchStyle,loadStyle,validateStyleVariants,woodlandPreviewStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection,colliderActive,validateCollider} from "./entities.mjs";
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
@@ -295,17 +295,18 @@ function drawAppearanceControls(contract,selection){
 $("inspectAppearance").onclick=()=>inspectAppearance();
 let catalogEntries=[],catalogMatches=[],catalogRequest=0;
 function refreshCatalog(){
-  catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked);
-  const menu=$("catalogAssets");menu.replaceChildren(...catalogMatches.map((a,i)=>new Option(a.name+" · "+a.domain+" · "+a.license,String(i))));
+  catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked,$("catalogDomain").value);
+  const menu=$("catalogAssets");menu.replaceChildren(...catalogMatches.map((a,i)=>new Option(a.name+" · "+a.domain+" · "+a.license+" · art review: "+a.visual_qa,String(i))));
   $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=!catalogMatches.length;
 }
 $("refreshCatalog").onclick=async()=>{
   const request=++catalogRequest;$("catalogStatus").textContent="Loading Atlas catalog";
   try{const entries=await fetchCatalog($("catalogURL").value);if(request!==catalogRequest)return;catalogEntries=entries;
+    const domain=$("catalogDomain"),domains=[...new Set(entries.map(a=>a.domain).filter(Boolean))].sort();domain.replaceChildren(new Option("All domains",""),...domains.map(k=>new Option(k,k)));domain.value=domains.includes("world-environment")?"world-environment":"";
     const menu=$("catalogCapability");menu.replaceChildren(new Option("All capabilities",""),...[...new Set(entries.flatMap(a=>a.capabilities))].sort().map(k=>new Option(k,k)));refreshCatalog();
   }catch(e){if(request===catalogRequest)$("catalogStatus").textContent=e.message;}
 };
-for(const k of ["catalogSearch","catalogCapability","catalogComponents"])$(k).oninput=refreshCatalog;
+for(const k of ["catalogSearch","catalogCapability","catalogComponents","catalogDomain"])$(k).oninput=refreshCatalog;
 $("loadCatalogAsset").onclick=()=>{const a=catalogMatches[Number($("catalogAssets").value)];if(a){const {height_ft,...source}=a.binding;loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);}};
 
 $("applyAppearance").onclick=async()=>{
@@ -397,9 +398,9 @@ $("level").onchange=()=>{const z=Number($("level").value);if(!displayedAddress([
 loadActor();
 let artRequest=0;
 const fixtureStyle="./examples/meadow-style.json";
-async function loadArt(reference){
+async function loadArt(reference,prepare=()=>fetchStyle(reference,catalog)){
   const request=++artRequest;$("artStatus").textContent="Loading art profile";
-  try{const next=await fetchStyle(reference,catalog);
+  try{const next=await prepare();
     if(request!==artRequest)return;
     gpu.setTerrainStyle(next);art=next;scatterDirty=true;syncLighting();
     $("artStatus").textContent=next.profile.id==="fantasy-meadow-fixture"?"Atlas meadow fixture loaded":"Atlas art loaded: "+next.profile.id;
@@ -407,6 +408,13 @@ async function loadArt(reference){
   }catch(e){if(request===artRequest)$("artStatus").textContent=(art?"Previous style retained: ":"Procedural fallback: ")+e.message;}
 }
 $("loadArt").onclick=()=>loadArt($("artURL").value.trim());
+$("loadWoodlandPreview").onclick=()=>loadArt(null,async()=>{
+  const url=new URL(fixtureStyle,location.href),response=await fetch(url);
+  if(!response.ok)throw Error("Fixture ground style unavailable");
+  const [fixture,entries]=await Promise.all([response.json(),fetchCatalog(ATLAS_CATALOG)]);
+  return loadStyle(validateStyleVariants(woodlandPreviewStyle(fixture,entries,url.href),catalog));
+});
+$("exportArt").onclick=()=>{if(art)downloadJSON(art.profile,"hex-art-style.json");};
 $("resetArt").onclick=()=>{$("artURL").value=fixtureStyle;loadArt(fixtureStyle);};
 $("promoteScatter").onclick=()=>{try{if(dirty||scatterDirty)throw Error("Wait for terrain refresh");const sample=scatterChoices.find(s=>s.key===$("scatterChoice").value&&s.address.every((v,i)=>v===selected[i]));if(!sample||!art)throw Error("Select a decorative sample");promoteSample(world,art,sample,crypto.randomUUID());dirty=true;sync();$("message").textContent="Decoration promoted to persistent object";}catch(e){$("message").textContent=e.message;}};
 loadArt(fixtureStyle);
