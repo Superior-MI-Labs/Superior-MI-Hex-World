@@ -191,7 +191,7 @@ export function createRenderer(canvas){
   }
   function draw(data,tex,m){if(!data.length)return;drawCalls++;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
   function drawTerrain(batch,tex,m,persistent){
-    if(!persistent){if(batch.data.length){terrainUploads++;draw(batch.data,tex,m);}return;}
+    if(!batch.gpu&&!persistent){if(batch.data.length){terrainUploads++;draw(batch.data,tex,m);}return;}
     if(!batch.gpu){
       if(!batch.data.length)return;
       const data=new Float32Array(batch.data);batch.count=data.length/22;batch.gpu=geometryBuffer();
@@ -200,7 +200,7 @@ export function createRenderer(canvas){
     drawCalls++;gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.count);
     gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   }
-  function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],pointShadow=null,softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
+  function render(faces,view,{projectionKey=null,cacheStaticTerrain=true,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],pointShadow=null,softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
     const query=beginTiming();
     // Keep the auxiliary sampler complete even when a previous masked sprite was evicted.
     gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
@@ -257,14 +257,14 @@ export function createRenderer(canvas){
       const textures=keys.map(k=>style?(detailTextures.get(detailKey(role,k))??detailTextures.get(detailKey(role,null))??ground):ground);
       for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,textures[i]??ground);}
       gl.activeTexture(gl.TEXTURE0);gl.uniform4iv(uniforms.u_color_modes,Array.from({length:4},(_,i)=>modes[i]==="albedo"?2:modes[i]==="rgb_detail"?1:0));
-      drawTerrain(batch,textures[0]??ground,pattern?1:0,projectionKey!==null);
+      drawTerrain(batch,textures[0]??ground,pattern?1:0,projectionKey!==null&&cacheStaticTerrain);
     }
     if(shadows.length&&!debug){const data=[];for(const f of shadows){const p=f.points.map(view);for(let i=0;i<3;i++)pack(data,p[i],[f.opacity,0,0],f.uv[i]);}gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,shadowTexture,5);gl.depthMask(true);gl.disable(gl.BLEND);}
     const batches=new Map(),cutouts=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
     const texturePairs=new Map(),frameTextures=new Map();
     function frameTexture(actor){
       used.add(actor.image);const cached=frameTextures.get(actor.image);
-      if(cached?.revision===actor.revision&&cached)return cached.tex;
+      if(cached&&cached.revision===actor.revision)return cached.tex;
       const tex=spriteTexture(actor);frameTextures.set(actor.image,{tex,revision:actor.revision});return tex;
     }
     function spritePair(actor){

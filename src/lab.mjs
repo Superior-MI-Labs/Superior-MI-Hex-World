@@ -613,7 +613,7 @@ window.addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
 window.addEventListener("blur",()=>keys.clear());
 document.addEventListener("focusin",e=>{if(editableTarget(e.target))keys.clear();});
 let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSamples=new FrameSamples();
-let benchmark=null,benchmarkReport=null;
+let benchmark=null,benchmarkReport=null,lastRenderCameraKey=null;
 const benchmarkFlags=["artStyle","scatter","windVisual","independentPhases","weatherVisual","pointLights","pointOcclusion","ambientOcclusion","contactShadows","directionalShadows","softSprites","showWater","wire","pattern","transitions","transitionDebug"];
 function benchmarkContext(){
   return {world_id:world.config.id,world_mode:worldMode,geometry_revision:world.geometryRevision,camera:camera(),selection:structuredClone(selection),quality:$("renderQuality").value,art_style:art&&$("artStyle").checked?art.profile.id:null,environment:world.environment,clock_mode:clock.snapshot().mode,flags:Object.fromEntries(benchmarkFlags.map(id=>[id,$(id).checked])),device_pixel_ratio:devicePixelRatio,viewport:[innerWidth,innerHeight],renderer:gpu.diagnostics(),resident_chunks:world.chunkCount,active_cells:domain.length,world_objects:world.entityCount,visible_triangles:visibleCache?.faces.length??0,scatter_candidates:scatterPlan.length};
@@ -740,8 +740,8 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const pointShadow=$("pointOcclusion").checked&&cutLevel()===null&&local.lights.length?pointShadowCache.prepare(world,local.lights):{plan:null,diagnostics:{lights:0,rays:0,unknown:0,budget:0,omitted:local.lights.length,cache_hit:false}};
   const walls=[];for(const [a,b] of selectionEdges(world,selection.filter(displayedAddress),grid)){const up=p=>[p[0],p[1],p[2]+grid.vertical_ft*.18],lo=p=>[p[0],p[1],p[2]+.015];walls.push({points:[lo(a),lo(b),up(b)],fade:[0,0,1]},{points:[lo(a),up(b),up(a)],fade:[0,1,1]});}
   const shadowMS=performance.now()-shadowStart,renderStart=performance.now();
-  gpu.render(visible,view,{projectionKey:ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,pointShadow:pointShadow.plan,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
-  const renderMS=performance.now()-renderStart;
+  gpu.render(visible,view,{projectionKey:ckey,cacheStaticTerrain:lastRenderCameraKey===null||lastRenderCameraKey===ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,pointShadow:pointShadow.plan,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
+  lastRenderCameraKey=ckey;const renderMS=performance.now()-renderStart;
   if($("wire").checked){
     if(!wireCells.has(selected[2]))wireCells.set(selected[2],domain.filter(a=>a[2]===selected[2]&&!hasVolume(world.get(...a).shape)));
     const emptyCorners=vertices(uniformShape(0),grid).upper.slice(0,6);

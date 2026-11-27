@@ -211,12 +211,16 @@ with sync_playwright() as p:
       const faces=[{kind:'top',color:[0,1,0],points:[[1,1,1],[30,1,1],[1,30,1]]}];
       r.render(faces,view,{pattern:false,projectionKey:'a'});const first=r.diagnostics(),pixel=r.readPixel(5,5);
       r.render(faces,view,{pattern:false,projectionKey:'a'});const repeat=r.diagnostics(),same=r.readPixel(5,5);
-      r.render(faces,view,{pattern:false,projectionKey:'b'});const changed=r.diagnostics();
-      return {first,repeat,changed,pixel,same};
+      r.render(faces,view,{pattern:false,projectionKey:'b',cacheStaticTerrain:false});const changed=r.diagnostics();
+      r.render(faces,view,{pattern:false,projectionKey:'b'});const settled=r.diagnostics();
+      r.render(faces,view,{pattern:false,projectionKey:'b',cacheStaticTerrain:false});const retained=r.diagnostics();
+      return {first,repeat,changed,settled,retained,pixel,same};
     }""")
     assert packed["first"]["terrain_uploads"]==1 and packed["first"]["terrain_buffer_bytes"]>0,packed
     assert packed["repeat"]["terrain_uploads"]==0 and packed["repeat"]["terrain_cache_hit"],packed
-    assert packed["changed"]["terrain_uploads"]==1 and packed["pixel"]==packed["same"],packed
+    assert packed["changed"]["terrain_uploads"]==1 and packed["changed"]["terrain_buffer_bytes"]==0 and packed["pixel"]==packed["same"],packed
+    assert packed["settled"]["terrain_uploads"]==1 and packed["settled"]["terrain_buffer_bytes"]>0,packed
+    assert packed["retained"]["terrain_uploads"]==0 and packed["retained"]["terrain_buffer_bytes"]==packed["settled"]["terrain_buffer_bytes"],packed
     alpha=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
       const c=document.createElement('canvas');c.width=c.height=64;
