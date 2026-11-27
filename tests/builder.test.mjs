@@ -16,7 +16,7 @@ test("woodland clearing is one deterministic reversible plan with fixed water an
  assert.equal(plan.edits.length,8);assert.equal(plan.entities.length,2);
  const h=new CellEditHistory(w);applyEditPlan(w,h,plan);assert.equal(w.entityCount,2);
  assert.equal(w.get(-2,1,0).components.water.fixed,true);assert.equal(w.get(-1,-1,0).components.water,undefined);
- const after=w.snapshot();h.undo();assert.deepEqual(w.snapshot(),before);h.redo();assert.deepEqual(w.snapshot(),after);
+ const after=w.snapshot();h.undo();assert.equal(w.entityCount,0);for(const e of plan.edits)assert.deepEqual(w.get(...e.address),e.expected);h.redo();assert.deepEqual(w.snapshot(),after);
  assert.throws(()=>planWoodlandClearing(w,[0,0,0],opts),/free/);
  assert.throws(()=>planWoodlandClearing(w,[100,100,0],opts),/Unknown/);
 });
