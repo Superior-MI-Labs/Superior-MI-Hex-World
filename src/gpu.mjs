@@ -189,7 +189,7 @@ export function createRenderer(canvas){
       gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,POINT_SHADOW_WIDTH,POINT_SHADOW_HEIGHT*POINT_SHADOW_LIMIT,gl.RED,gl.UNSIGNED_BYTE,pointShadow.data);
       gl.activeTexture(gl.TEXTURE0);lastShadowData=pointShadow.data;
     }
-    gl.uniform1iv(lightShadow,new Int32Array(lights.map(l=>pointShadow?(pointShadow.ids.indexOf(l.id)+1):0)));
+    if(lights.length)gl.uniform1iv(lightShadow,new Int32Array(lights.map(l=>pointShadow?(pointShadow.ids.indexOf(l.id)+1):0)));
     gl.uniform1i(lightCount,lights.length);if(lights.length){gl.uniform4fv(lightPos,lights.flatMap(l=>[...l.point,l.radius]));gl.uniform4fv(lightRGB,lights.flatMap(l=>[...l.color,l.intensity]));}
     gl.uniform1f(uniforms.u_detail_strength,style?.detail.strength??.25);
     gl.uniform4iv(uniforms.u_color_modes,[0,0,0,0]);

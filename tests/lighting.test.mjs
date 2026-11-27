@@ -53,6 +53,7 @@ test("local shadow maps use actual terrain, ignore flicker, invalidate on edits 
  w.set(1,0,0,{material:"air",shape:uniformShape(0)});
  assert.ok(cache.prepare(w,[source]).plan.data.every(v=>v===255));
  assert.equal(cache.prepare(w,[{...source,moving:true}]).plan,null);
+ const unknownWorld=new World(cfg);const unknown=cache.prepare(unknownWorld,[source]);assert.ok(unknown.diagnostics.unknown>0);assert.ok(unknown.plan.data.every(v=>v===255));
  const budget=cache.prepare(w,[source,{...source,id:"a"},{...source,id:"b"},{...source,id:"far",radius:40}]);
  assert.deepEqual(budget.plan.ids,["a","b"]);assert.equal(budget.diagnostics.omitted,2);assert.equal(budget.diagnostics.rays,2*POINT_SHADOW_WIDTH*POINT_SHADOW_HEIGHT);
 });

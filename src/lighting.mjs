@@ -131,7 +131,7 @@ export class PointShadowCache{
   prepare(world,lights){
     // Stable identity selection ignores visual flicker. Lights moving along
     // playback paths or exceeding the first adapter's radius stay unshadowed.
-    const eligible=lights.filter(l=>!l.moving&&l.radius<=POINT_SHADOW_RADIUS).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+    const eligible=lights.filter(l=>!l.moving&&typeof l.id==="string"&&l.radius>0&&l.radius<=POINT_SHADOW_RADIUS).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
     const selected=eligible.slice(0,POINT_SHADOW_LIMIT),ids=selected.map(l=>l.id),key=JSON.stringify(selected.map(l=>[l.id,l.point,l.radius]));
     const omitted=lights.length-selected.length;
     if(!selected.length){this.clear();return {plan:null,diagnostics:{lights:0,rays:0,unknown:0,budget:0,omitted,cache_hit:false}};}
