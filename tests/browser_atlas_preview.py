@@ -6,6 +6,13 @@ from playwright.sync_api import sync_playwright
 
 out=Path("/tmp/hex-world-atlas-preview")
 out.mkdir(parents=True,exist_ok=True)
+
+def wait_for_host(page,style):
+    # The module initializes asynchronously. Never JSON.parse an empty pre
+    # before the first successful frame. The style check remains mandatory.
+    page.wait_for_function("document.querySelector('#status')?.textContent.includes('WebGL2')",timeout=120000)
+    page.wait_for_function("style=>JSON.parse(document.querySelector('#status').textContent).art_style===style",arg=style,timeout=120000)
+
 counts={"fantasy-recovered-grass-20261125":12,"fantasy-recovered-foliage-20261125":16,
         "fantasy-recovered-trees-20261125":2,"fantasy-recovered-chests-20261125":4,
         "painterly-fantasy-seasonal-fern":5,"painterly-fantasy-understory":5,
@@ -16,8 +23,7 @@ with sync_playwright() as p:
     errors=[]
     page.on("pageerror",lambda e: errors.append(str(e)))
     page.goto("http://127.0.0.1:8000/")
-    page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'",timeout=120000)
+    wait_for_host(page,"fantasy-meadow-fixture")
     page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'",timeout=120000)
     status=lambda: page.evaluate("JSON.parse(document.querySelector('#status').textContent)")
     def measure():
@@ -153,7 +159,8 @@ with sync_playwright() as p:
     try:
         response=page.goto("http://127.0.0.1:8000/",wait_until="domcontentloaded",timeout=60000)
         assert response and response.ok,"Fresh host document failed"
-        page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'",timeout=120000)
+        wait_for_host(page,"fantasy-meadow-fixture")
+        page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'",timeout=120000)
     except Exception:
         details=page.evaluate("""()=>Object.fromEntries(['status','artStatus','assetStatus','message'].map(id=>[id,document.getElementById(id)?.textContent??null]))""")
         report["fresh_session_failure"]={"details":details,"page_errors":errors}
@@ -161,18 +168,30 @@ with sync_playwright() as p:
         print("Fresh session failure:",json.dumps(report["fresh_session_failure"]))
         page.screenshot(path=str(out/"fresh-session-failure.png"),full_page=True)
         raise
-    page.locator("#importArt").set_input_files({"name":"style.json","mimeType":"application/json","buffer":json.dumps(profile).encode()})
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
-    page.locator("#load").set_input_files({"name":"world.json","mimeType":"application/json","buffer":json.dumps(world).encode()})
-    page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
-    page.locator("#zoom").evaluate("(e)=>{e.value='12';e.dispatchEvent(new Event('input'))}")
-    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n&&s.water_triangles>0}",arg=total,timeout=120000)
+    try:
+        page.locator("#importArt").set_input_files({"name":"style.json","mimeType":"application/json","buffer":json.dumps(profile).encode()})
+        page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
+        page.locator("#load").set_input_files({"name":"world.json","mimeType":"application/json","buffer":json.dumps(world).encode()})
+        page.wait_for_function("document.querySelector('#message').textContent==='World imported'",timeout=120000)
+        page.locator("#zoom").evaluate("(e)=>{e.value='12';e.dispatchEvent(new Event('input'))}")
+        page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n&&s.water_triangles>0}",arg=total,timeout=120000)
+    except Exception:
+        report["restore_failure"]={"details":page.evaluate("""()=>Object.fromEntries(['status','artStatus','assetStatus','message'].map(id=>[id,document.getElementById(id)?.textContent??null]))"""),"page_errors":errors}
+        (out/"report.json").write_text(json.dumps(report,indent=2))
+        print("Restore failure:",json.dumps(report["restore_failure"]))
+        page.screenshot(path=str(out/"restore-failure.png"),full_page=True)
+        raise
     with page.expect_download() as restored:
         page.locator("#save").click()
     restored_world=json.loads(Path(restored.value.path()).read_text())
     recovered=next(e for e in restored_world["entities"] if e["id"]==entity_id)
     assert recovered==entity
     assert restored_world["chunks"]==world["chunks"] and restored_world["entities"]==world["entities"]
+    assert restored_world["world"]==world["world"] and restored_world["clock"]==world["clock"] and restored_world["effects"]==world["effects"]
+    with page.expect_download() as restored_style:
+        page.locator("#exportArt").evaluate("(b)=>b.click()")
+    assert json.loads(Path(restored_style.value.path()).read_text())==profile
+    page.locator("#viewport").screenshot(path=str(out/"woodland-restored.png"))
     report["clearing"]={"edit_cells":len(plan["edits"]),"objects":len(plan["entities"]),"fixed_water_cells":len(fixed),"undo_redo":True,"frozen_water_persisted":True}
     report["round_trip"]={"entity":entity,"restored":True,"style":profile["id"],"camera_views":6,"directional_qa":"not claimed; static billboard"}
     report["checkpoint"]["fresh_session_round_trip"]=True

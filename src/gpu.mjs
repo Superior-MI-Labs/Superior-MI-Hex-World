@@ -101,7 +101,8 @@ export function createRenderer(canvas){
   }
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,64,64,0,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
-  for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}gl.activeTexture(gl.TEXTURE0);
+  for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}
+  gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
   const mask=texture();let maskEnabled=false;
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,mask);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([128,128,128,255]));
@@ -152,6 +153,8 @@ export function createRenderer(canvas){
     gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   }
   function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
+    // Keep the auxiliary sampler complete even when a previous masked sprite was evicted.
+    gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(waterTime,visualTime);
     const lights=pointLights.slice(0,MAX_POINT_LIGHTS);

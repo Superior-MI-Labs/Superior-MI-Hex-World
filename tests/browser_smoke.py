@@ -51,6 +51,32 @@ with sync_playwright() as p:
       return {valid,bad};
     }""")
     assert masks["valid"] and "grayscale" in masks["bad"]["invalid-color"] and "mismatch" in masks["bad"]["invalid-size"],masks
+    # Exercise the same import, qualification, placement and save pipeline as a real asset.
+    binding={"manifest":"./test-emissive/manifest.json","asset":"lamp","emissive_mask":"mask","height_ft":3}
+    page.locator("#importObjectBinding").set_input_files({"name":"emissive.json","mimeType":"application/json","buffer":json.dumps(binding).encode()})
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded' && document.querySelector('#spatialStatus').textContent.includes('emissive mask')")
+    page.locator("#placeActor").click()
+    page.locator("#objects").select_option(index=1)
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).emissive_mask_instances===1")
+    page.locator("summary",has_text="Object light source").click()
+    page.locator("#objectEmissive").fill("1")
+    page.locator("#applyObjectLight").click()
+    page.wait_for_function("document.querySelector('#objectLightStatus').textContent==='Light attached'")
+    with page.expect_download() as mask_save:
+        page.locator("#save").click()
+    saved_mask=json.loads(Path(mask_save.value.path()).read_text())
+    lamp=next(e for e in saved_mask["entities"] if e["visual"]["asset"]=="lamp")
+    assert lamp["visual"]["emissive_mask"]=="mask" and lamp["light"]["emissive"]==1
+    page.locator("#load").set_input_files({"name":"mask-world.json","mimeType":"application/json","buffer":json.dumps(saved_mask).encode()})
+    page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).emissive_mask_instances===1")
+    page.locator("#objects").select_option(label=page.locator("#objects option").filter(has_text="lamp").text_content())
+    page.locator("#removeObject").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===1")
+    page.locator("summary",has_text="Object light source").click()
+    page.locator("#resetView").click()
+    page.locator("#loadActor").click()
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'")
     # Real shared ZIP reader, canonical composition and independent input/slot choices.
     stream=BytesIO()
     root=Path("examples/chest-fixture")

@@ -288,7 +288,7 @@ async function qualifyBinding(raw){
 }
 async function loadBinding(raw){
   const request=++spriteRequest;$("assetStatus").textContent="Loading sprite";
-  try{const resolved=await resolveAtlasBinding(raw),{binding,next}=await qualifyBinding(resolved.binding);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";$("spatialStatus").textContent=resolved.warnings.join("; ")||("Height "+binding.height_ft+" ft · "+(binding.views?"6 views":"billboard")+(binding.wind?" · wind-responsive":""));}
+  try{const resolved=await resolveAtlasBinding(raw),{binding,next}=await qualifyBinding(resolved.binding);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";$("spatialStatus").textContent=resolved.warnings.join("; ")||("Height "+binding.height_ft+" ft · "+(binding.views?"6 views":"billboard")+(binding.wind?" · wind-responsive":"")+(next.emissiveMask?" · emissive mask":""));}
   catch(e){if(request===spriteRequest){actor=null;$("assetStatus").textContent=e.message;$("spatialStatus").textContent="";}}
 }
 let appearanceRequest=0,appearanceKey=null,inspectRequest=0;
