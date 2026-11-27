@@ -8,7 +8,7 @@ import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoo
 import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
-import {ATLAS_CATALOG,fetchCatalog,searchCatalog} from "./catalog.mjs";
+import {ATLAS_CATALOG,fetchCatalog,searchCatalog,catalogBrowseOptions} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
 import {fetchStyle,loadStyle,validateStyle,validateStyleVariants,woodlandPreviewStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
@@ -316,20 +316,26 @@ function drawAppearanceControls(contract,selection){
 }
 $("inspectAppearance").onclick=()=>inspectAppearance();
 let catalogEntries=[],catalogMatches=[],catalogRequest=0;
+const browseMenus={category_path:"catalogCategory",perspective:"catalogPerspective",theme:"catalogTheme",medium:"catalogMedium",family:"catalogFamily"};
 function refreshCatalog(){
-  catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked,$("catalogDomain").value);
-  const menu=$("catalogAssets");menu.replaceChildren(...catalogMatches.map((a,i)=>new Option(a.name+" · "+a.domain+" · "+a.license+" · art review: "+a.visual_qa,String(i))));
+  const browse=Object.fromEntries(Object.entries(browseMenus).map(([k,id])=>[k,$(id).value]));
+  catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked,$("catalogDomain").value,browse);
+  const menu=$("catalogAssets"),previous=menu.value;menu.replaceChildren(...catalogMatches.map(a=>new Option(a.name+" · "+a.domain+(a.family?" · "+a.family:"")+" · "+a.license+" · art review: "+a.visual_qa,a.id)));
+  if(catalogMatches.some(a=>a.id===previous))menu.value=previous;
   $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=!catalogMatches.length;
 }
 $("refreshCatalog").onclick=async()=>{
   const request=++catalogRequest;$("catalogStatus").textContent="Loading Atlas catalog";
   try{const entries=await fetchCatalog($("catalogURL").value);if(request!==catalogRequest)return;catalogEntries=entries;
     const domain=$("catalogDomain"),domains=[...new Set(entries.map(a=>a.domain).filter(Boolean))].sort();domain.replaceChildren(new Option("All domains",""),...domains.map(k=>new Option(k,k)));domain.value=domains.includes("world-environment")?"world-environment":"";
-    const menu=$("catalogCapability");menu.replaceChildren(new Option("All capabilities",""),...[...new Set(entries.flatMap(a=>a.capabilities))].sort().map(k=>new Option(k,k)));refreshCatalog();
+    const menu=$("catalogCapability");menu.replaceChildren(new Option("All capabilities",""),...[...new Set(entries.flatMap(a=>a.capabilities))].sort().map(k=>new Option(k,k)));
+    const options=catalogBrowseOptions(entries);
+    for(const [key,id] of Object.entries(browseMenus)){const select=$(id),previous=select.value,values=options[key];select.replaceChildren(new Option("All",""),...values.map(v=>new Option(v,v)));select.value=values.includes(previous)?previous:"";select.disabled=!values.length;}
+    refreshCatalog();
   }catch(e){if(request===catalogRequest)$("catalogStatus").textContent=e.message;}
 };
-for(const k of ["catalogSearch","catalogCapability","catalogComponents","catalogDomain"])$(k).oninput=refreshCatalog;
-$("loadCatalogAsset").onclick=()=>{const a=catalogMatches[Number($("catalogAssets").value)];if(a){const {height_ft,...source}=a.binding;loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);}};
+for(const k of ["catalogSearch","catalogCapability","catalogComponents","catalogDomain",...Object.values(browseMenus)])$(k).oninput=refreshCatalog;
+$("loadCatalogAsset").onclick=()=>{const a=catalogMatches.find(e=>e.id===$("catalogAssets").value);if(a){const {height_ft,...source}=a.binding;loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);}};
 
 $("applyAppearance").onclick=async()=>{
   const id=$("objects").value,e=world.getEntity(id),request=++appearanceRequest,owner=world;if(!e)return;

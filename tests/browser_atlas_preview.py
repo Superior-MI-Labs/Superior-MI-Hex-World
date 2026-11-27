@@ -18,6 +18,7 @@ with sync_playwright() as p:
     page.goto("http://127.0.0.1:8000/")
     page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'")
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'")
     status=lambda: page.evaluate("JSON.parse(document.querySelector('#status').textContent)")
     def measure():
         # Existing profiler publishes 500ms windows. Record settled windows,
@@ -82,7 +83,7 @@ with sync_playwright() as p:
     page.locator("#catalogSearch").fill(asset)
     page.wait_for_function("document.querySelector('#catalogAssets').options.length===1")
     page.locator("#loadCatalogAsset").click()
-    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'",timeout=120000)
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded' && document.querySelector('#spatialStatus').textContent.includes('2.5 ft')",timeout=120000)
     before=status()["world_objects"]
     page.locator("#placeActor").click()
     page.wait_for_function("n=>JSON.parse(document.querySelector('#status').textContent).world_objects===n+1",arg=before)
@@ -99,8 +100,14 @@ with sync_playwright() as p:
     with page.expect_download() as baseline:
         page.locator("#save").click()
     base_world=json.loads(Path(baseline.value.path()).read_text())
+    assert len(base_world["entities"])==before
     page.locator("#previewWoodland").evaluate("(b)=>b.click()")
-    page.wait_for_function("!document.querySelector('#applyEditPlan').disabled",timeout=120000)
+    try:
+        page.wait_for_function("!document.querySelector('#applyEditPlan').disabled",timeout=120000)
+    except Exception:
+        print("Clearing preview failure:",page.locator("#planStatus").text_content())
+        page.screenshot(path=str(out/"clearing-failure.png"),full_page=True)
+        raise
     with page.expect_download() as staged:
         page.locator("#exportStagedPlan").evaluate("(b)=>b.click()")
     plan=json.loads(Path(staged.value.path()).read_text())
@@ -142,7 +149,8 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
     page.locator("#load").set_input_files({"name":"world.json","mimeType":"application/json","buffer":json.dumps(world).encode()})
     page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
-    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n}",arg=total,timeout=120000)
+    page.locator("#zoom").evaluate("(e)=>{e.value='12';e.dispatchEvent(new Event('input'))}")
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n&&s.water_triangles>0}",arg=total,timeout=120000)
     with page.expect_download() as restored:
         page.locator("#save").click()
     restored_world=json.loads(Path(restored.value.path()).read_text())

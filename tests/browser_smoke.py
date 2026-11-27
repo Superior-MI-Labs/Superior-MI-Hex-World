@@ -86,13 +86,17 @@ with sync_playwright() as p:
       return a===await atlasPackSession(binding.manifest);
     }""")
     assert shared
-    catalog={"schema":"smi-public-catalog/1","packs":[{"id":"fixture","zip":"demo/chest-test.zip","archive_sha256":digest}],"assets":[{"id":"fixture.chest","name":"Chest","pack":"fixture","kind":"composition","capabilities":["world-use","compatible-slots"],"license":"CC0-1.0"}]}
+    catalog={"schema":"smi-public-catalog/1","packs":[{"id":"fixture","zip":"demo/chest-test.zip","archive_sha256":digest}],"assets":[{"id":"fixture.chest","name":"Chest","pack":"fixture","kind":"composition","capabilities":["world-use","compatible-slots"],"license":"CC0-1.0","category_path":["world","world.props","world.props.containers"],"perspective":["isometric"],"theme":["fantasy"],"medium":["raster-2d"],"family":"painterly-fantasy"}]}
     page.route("**/test-catalog.json",lambda route: route.fulfill(json=catalog))
     page.locator("summary",has_text="Browse published Atlas assets").click()
     page.locator("#catalogURL").fill("http://127.0.0.1:8000/test-catalog.json")
     page.locator("#refreshCatalog").click()
     page.wait_for_function("document.querySelector('#catalogAssets').options.length===1")
+    page.locator("#catalogCategory").select_option("world.props")
+    page.locator("#catalogPerspective").select_option("isometric")
+    page.locator("#catalogFamily").select_option("painterly-fantasy")
     page.locator("#catalogCapability").select_option("world-use")
+    assert page.locator("#catalogAssets").input_value()=="fixture.chest"
     page.locator("#loadCatalogAsset").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     page.locator("#loadChest").click()
@@ -680,7 +684,8 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#paletteStatus').textContent==='1 imported assets'")
     page.locator("#importPalette").set_input_files({"name":"bad-palette.json","mimeType":"application/json","buffer":b"{}"})
     page.wait_for_function("document.querySelector('#paletteStatus').textContent.startsWith('Previous palette retained:')")
-    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).builder.palette")==1
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===1")
+    assert page.locator("#assetPalette button").count()==1
     with page.expect_download() as diagnostic:
         page.locator("#exportDiagnostics").click()
     diagnostics=json.loads(Path(diagnostic.value.path()).read_text())
