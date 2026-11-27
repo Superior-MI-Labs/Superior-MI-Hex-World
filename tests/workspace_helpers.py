@@ -23,6 +23,9 @@ def reveal(page,locator):
         field=locator.first.evaluate("(el)=>el.closest('[data-brush-for]')?.hidden===true")
         if field:
             page.locator("#showBrushOptions").click()
+    advanced=locator.first.evaluate("(el)=>el.closest('.catalog-advanced')?.open===false")
+    if advanced:
+        page.locator(".catalog-advanced > summary").click()
     # The newly nested manual-binding group is advanced but remains reachable.
     manual=locator.first.evaluate("(el)=>{const d=el.closest('details');return d?.querySelector(':scope > summary')?.textContent==='Manual asset binding (advanced)'&&!d.open}")
     if manual:

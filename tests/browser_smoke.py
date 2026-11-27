@@ -204,6 +204,9 @@ with sync_playwright() as p:
     control(page,"#catalogCards img").scroll_into_view_if_needed()
     page.wait_for_function("document.querySelector('#catalogCards img')?.naturalWidth===1")
     assert page.locator("#assetDock").is_visible()
+    if page.locator(".catalog-advanced").evaluate("(el)=>el.open"):
+        page.locator(".catalog-advanced > summary").click()
+    page.locator("#catalogCards").scroll_into_view_if_needed()
     page.screenshot(path="/tmp/hex-world-library.png")
     control(page,"#loadCatalogAsset").click()
     page.locator("#closeLibrary").click()

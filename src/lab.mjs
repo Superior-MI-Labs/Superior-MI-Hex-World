@@ -221,6 +221,7 @@ function selectSceneObject(id,focus){
   const e=world.getEntity(id);if(!e)return;
   if(drag){$("sceneStatus").textContent="Finish the current gesture first";return;}
   const inRegion=domain.some(a=>a.every((v,i)=>v===e.address[i]));
+  if(!inRegion&&(!world.config.generation||![-2,-1,0,1,2].includes(e.address[2]))){$("sceneStatus").textContent="Object is outside the active editor region";return;}
   if(!inRegion&&!focus){focus=true;}
   if(!displayedAddress(e.address)){$("sceneStatus").textContent="Object is hidden by the current cutaway";return;}
   if(focus){
@@ -228,6 +229,8 @@ function selectSceneObject(id,focus){
     const h=anchorHeight(e,world.get(...e.address),grid)??0,o=physicalPosition(...e.address,grid),p=view([o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h]);panX+=canvas.width/2-p.x;panY+=canvas.height/2-p.y;
     if(worldMode==="exploration")refreshRegion(true);
   }
+  if(!domain.some(a=>a.every((v,i)=>v===e.address[i]))){$("sceneStatus").textContent="Object remains outside the active editor region";return;}
+  $("paintTool").value="select";$("paintTool").dispatchEvent(new Event("change",{bubbles:true}));
   selected=[...e.address];selection=[[...selected]];faceSelect.value="upper";sync();$("objects").value=id;$("objects").dispatchEvent(new Event("change",{bubbles:true}));$("sceneStatus").textContent="Selected "+e.visual.asset;
   if(!focus)workspace.openPanel("assetPanel");
 }
