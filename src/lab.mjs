@@ -15,7 +15,7 @@ import {createAtlasSprite,createAtlasMask,resolveAtlasBinding,AnimationPhasePool
 import {ATLAS_CATALOG,fetchCatalog,searchCatalog,catalogBrowseOptions} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
 import {fetchStyle,loadStyle,validateStyle,validateStyleVariants,woodlandPreviewStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
-import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
+import {LEVELS,EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection,colliderActive,validateCollider} from "./entities.mjs";
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
 import {cutawayView,cutawayMask,traceVisibility} from "./visibility.mjs";
@@ -221,7 +221,7 @@ function selectSceneObject(id,focus){
   const e=world.getEntity(id);if(!e)return;
   if(drag){$("sceneStatus").textContent="Finish the current gesture first";return;}
   const inRegion=domain.some(a=>a.every((v,i)=>v===e.address[i]));
-  if(!inRegion&&(!world.config.generation||![-2,-1,0,1,2].includes(e.address[2]))){$("sceneStatus").textContent="Object is outside the active editor region";return;}
+  if(!inRegion&&(!world.config.generation||!LEVELS.includes(e.address[2]))){$("sceneStatus").textContent="Object is outside the active editor region";return;}
   if(!inRegion&&!focus){focus=true;}
   if(!displayedAddress(e.address)){$("sceneStatus").textContent="Object is hidden by the current cutaway";return;}
   if(focus){

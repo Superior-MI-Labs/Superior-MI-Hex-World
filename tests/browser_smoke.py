@@ -179,7 +179,7 @@ with sync_playwright() as p:
     catalog["assets"].extend({"id":"fixture.region."+str(i),"name":"Preview "+str(i),"pack":"fixture","kind":"region","license":"CC0-1.0"} for i in range(25))
     # Deterministic published-thumbnail route; cards must not decode ZIPs on browse.
     import base64
-    thumbnail=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
+    thumbnail=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg==")
     page.route("**/previews/"+"b"*64+".png",lambda route: route.fulfill(body=thumbnail,content_type="image/png"))
     page.route("**/test-catalog.json",lambda route: route.fulfill(json=catalog))
     control(page,"#openAssetLibrary").click()
