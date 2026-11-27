@@ -1,0 +1,3 @@
+import test from "node:test";import assert from "node:assert/strict";import {sceneMatches,SCENE_PAGE_SIZE} from "../src/scene-view.mjs";
+const e=(id,asset,address)=>({id,visual:{asset},address});
+test("hierarchy filters actual asset and address records in deterministic level order",()=>{const entries=[e("b","oak",[1,0,1]),e("a","pine",[0,0,-1]),e("c","pine",[2,-1,1])];assert.deepEqual(sceneMatches(entries).map(v=>v.id),["a","b","c"]);assert.deepEqual(sceneMatches(entries,"pine","1").map(v=>v.id),["c"]);assert.deepEqual(sceneMatches(entries,"2,-1,1").map(v=>v.id),["c"]);assert.equal(sceneMatches(entries,"missing").length,0);assert.equal(entries[0].id,"b");assert.equal(SCENE_PAGE_SIZE,40);});
