@@ -161,12 +161,24 @@ with sync_playwright() as p:
     }""")
     assert shared
     catalog={"schema":"smi-public-catalog/1","packs":[{"id":"fixture","zip":"demo/chest-test.zip","archive_sha256":digest}],"assets":[{"id":"fixture.chest","name":"Chest","pack":"fixture","kind":"composition","capabilities":["world-use","compatible-slots"],"license":"CC0-1.0","category_path":["world","world.props","world.props.containers"],"perspective":["isometric"],"theme":["fantasy"],"medium":["raster-2d"],"family":"painterly-fantasy"}]}
+    catalog["assets"][0]["thumbnail"]="previews/"+"b"*64+".png"
+    catalog["assets"].extend({"id":"fixture.region."+str(i),"name":"Preview "+str(i),"pack":"fixture","kind":"region","license":"CC0-1.0"} for i in range(25))
+    # Deterministic published-thumbnail route; cards must not decode ZIPs on browse.
+    import base64
+    thumbnail=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
+    page.route("**/previews/"+"b"*64+".png",lambda route: route.fulfill(body=thumbnail,content_type="image/png"))
     page.route("**/test-catalog.json",lambda route: route.fulfill(json=catalog))
     control(page,"summary",has_text="Browse published Atlas assets").click()
     control(page,"#catalogURL").fill("http://127.0.0.1:8000/test-catalog.json")
     control(page,"#refreshCatalog").click()
-    page.wait_for_function("document.querySelector('#catalogAssets').options.length===1")
+    page.wait_for_function("document.querySelector('#catalogAssets').options.length===26")
+    assert control(page,"#catalogCards button").count()==24
+    control(page,"#catalogNext").click()
+    assert control(page,"#catalogCards button").count()==2
+    control(page,"#catalogPrev").click()
+    assert control(page,"#catalogCards button").count()==24
     control(page,"#catalogCategory").select_option("world.props")
+    page.wait_for_function("document.querySelector('#catalogAssets').options.length===1")
     control(page,"#catalogPerspective").select_option("isometric")
     control(page,"#catalogFamily").select_option("painterly-fantasy")
     control(page,"#catalogCapability").select_option("world-use")
@@ -175,6 +187,8 @@ with sync_playwright() as p:
     control(page,'[data-asset="fixture.chest"]').click()
     assert control(page,'[data-asset="fixture.chest"]').get_attribute("aria-pressed")=="true"
     assert "CC0-1.0" in control(page,"#catalogSelection").text_content()
+    control(page,"#catalogCards img").scroll_into_view_if_needed()
+    page.wait_for_function("document.querySelector('#catalogCards img')?.naturalWidth===1")
     page.screenshot(path="/tmp/hex-world-library.png")
     control(page,"#loadCatalogAsset").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
@@ -479,18 +493,18 @@ with sync_playwright() as p:
     control(page,"#transitions").uncheck()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).transitions === false")
     control(page,"#transitions").check()
-    reveal(page,page.get_by_role("button",name="Reset terrain")).click()
+    reveal(page,page.get_by_role("button",name="Reset terrain",include_hidden=True)).click()
     assert control(page,"#resolution").count()==0
-    reveal(page,page.get_by_role("button",name="Reactive fire")).click()
+    reveal(page,page.get_by_role("button",name="Reactive fire",include_hidden=True)).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.burn===8")
-    reveal(page,page.get_by_role("button",name="Advance 6 seconds")).click()
+    reveal(page,page.get_by_role("button",name="Advance 6 seconds",include_hidden=True)).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.burn===8")
     control(page,"#mode").select_option("manual")
-    reveal(page,page.get_by_role("button",name="Advance 6 seconds")).click()
-    reveal(page,page.get_by_role("button",name="Advance 6 seconds")).click()
+    reveal(page,page.get_by_role("button",name="Advance 6 seconds",include_hidden=True)).click()
+    reveal(page,page.get_by_role("button",name="Advance 6 seconds",include_hidden=True)).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.scorch===1")
     control(page,"#level").select_option("1")
-    reveal(page,page.get_by_role("button",name="Full",exact=True)).click()
+    reveal(page,page.get_by_role("button",name="Full",exact=True,include_hidden=True)).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected[2]===1 && JSON.parse(document.querySelector('#status').textContent).cell.material==='soil'")
     # Select the visible front side of the new upper cell, not its top.
     xy=page.evaluate("""async () => {
@@ -530,7 +544,7 @@ with sync_playwright() as p:
     control(page,"#actorState").select_option("walk")
     control(page,"#loadActor").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
-    reveal(page,page.get_by_role("button",name="Rotate 60°")).click()
+    reveal(page,page.get_by_role("button",name="Rotate 60°",include_hidden=True)).click()
     control(page,"#scene").scroll_into_view_if_needed()
     box=control(page,"#scene").bounding_box()
     page.mouse.move(box["x"]+box["width"]/2,box["y"]+box["height"]/2)
@@ -538,7 +552,7 @@ with sync_playwright() as p:
     page.mouse.move(box["x"]+box["width"]/2+50,box["y"]+box["height"]/2+20)
     page.mouse.up(button="middle")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.panX > 0")
-    reveal(page,page.get_by_role("button",name="Reset view")).click()
+    reveal(page,page.get_by_role("button",name="Reset view",include_hidden=True)).click()
     page.on("dialog",lambda d:d.accept())
     control(page,"#worldMode").select_option("exploration")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_mode==='exploration'",timeout=60000)
@@ -559,7 +573,7 @@ with sync_playwright() as p:
     assert capture["metrics"]["gpu_ms"] is None or capture["metrics"]["gpu_samples"]>0
     control(page,"summary",has_text="Performance capture").click()
     initial=page.evaluate("JSON.parse(document.querySelector('#status').textContent).resident_chunks")
-    reveal(page,page.get_by_role("button",name="Half",exact=True)).click()
+    reveal(page,page.get_by_role("button",name="Half",exact=True,include_hidden=True)).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===1)")
     control(page,"#scene").scroll_into_view_if_needed()
     box=control(page,"#scene").bounding_box()
@@ -568,7 +582,7 @@ with sync_playwright() as p:
     page.mouse.move(box["x"]+box["width"]/2+3500,box["y"]+box["height"]/2)
     page.mouse.up(button="middle")
     page.wait_for_function("(n)=>JSON.parse(document.querySelector('#status').textContent).resident_chunks>n",arg=initial,timeout=60000)
-    reveal(page,page.get_by_role("button",name="Reset view")).click()
+    reveal(page,page.get_by_role("button",name="Reset view",include_hidden=True)).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.panX===0 && JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===1)",timeout=60000)
     # Return to a deterministic island for construction and persistent object tests.
     control(page,"#worldMode").select_option("island")
@@ -613,7 +627,7 @@ with sync_playwright() as p:
     control(page,"#extinguish").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_effects===0")
     # New island: choose a neighboring floor through the actual renderer and move.
-    reveal(page,page.get_by_role("button",name="Reset terrain")).click()
+    reveal(page,page.get_by_role("button",name="Reset terrain",include_hidden=True)).click()
     control(page,"#movingObject").select_option("demo-actor")
     xy=page.evaluate("""async () => {
       const {project}=await import('/src/camera.mjs');
@@ -727,7 +741,7 @@ with sync_playwright() as p:
     control(page,"#showColliders").uncheck()
     control(page,"#removeObject").click()
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===1&&s.scatter_candidates===n-1}",arg=count)
-    reveal(page,page.get_by_role("button",name="Basin",exact=True)).click()
+    reveal(page,page.get_by_role("button",name="Basin",exact=True,include_hidden=True)).click()
     control(page,"summary",has_text="Water editing").click()
     control(page,"#waterFill").fill(".5")
     control(page,"#waterFlowX").fill("2")
@@ -771,7 +785,7 @@ with sync_playwright() as p:
     page.mouse.click(box["x"]+xy["x"]*box["width"]/control(page,"#scene").evaluate("(e)=>e.width"),box["y"]+xy["y"]*box["height"]/control(page,"#scene").evaluate("(e)=>e.height"))
     page.keyboard.up("Shift")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selection.length===2")
-    reveal(page,page.get_by_role("button",name="Half",exact=True)).click()
+    reveal(page,page.get_by_role("button",name="Half",exact=True,include_hidden=True)).click()
     with page.expect_download() as batch:
         control(page,"#save").click()
     data=json.loads(Path(batch.value.path()).read_text())
@@ -795,7 +809,7 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.scale>24")
     page.keyboard.up("x")
     control(page,"#resetView").click()
-    reveal(page,page.get_by_role("button",name="Reset terrain")).click()
+    reveal(page,page.get_by_role("button",name="Reset terrain",include_hidden=True)).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.history.undo===0")
     control(page,"summary",has_text="Builder painting and edit plans").click()
     control(page,"#paintTool").select_option("half")
@@ -870,7 +884,7 @@ with sync_playwright() as p:
     control(page,"#cameraAlignment").select_option("30")
     control(page,"#brushRadius").select_option("0")
     control(page,"#paintTool").select_option("select")
-    reveal(page,page.get_by_role("button",name="Reset terrain")).click()
+    reveal(page,page.get_by_role("button",name="Reset terrain",include_hidden=True)).click()
     control(page,"#resetView").click()
     page.wait_for_function("""()=>{const s=JSON.parse(document.querySelector('#status').textContent),c=s.camera;return c.alignment_deg===30&&c.yaw===0&&!c.rotating&&c.scale===24&&c.panX===0&&c.panY===50&&s.selected.join(',')==='0,0,0'&&s.cell.shape.upper.every(v=>v===2)&&s.builder.history.undo===0}""")
     scene.scroll_into_view_if_needed()

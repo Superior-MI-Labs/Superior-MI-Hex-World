@@ -5,6 +5,10 @@ def reveal(page,locator):
     panel=locator.first.evaluate("(el)=>el.closest('.inspector-section')?.id??null")
     if panel:
         if not page.locator("#"+panel).is_visible():
+            if page.locator("#exitFocus").is_visible():
+                page.locator("#exitFocus").click()
+            if page.locator("#toggleInspector").get_attribute("aria-pressed")=="true":
+                page.locator("#toggleInspector").click()
             page.locator('[data-panel="'+panel+'"]').click()
         field=locator.first.evaluate("(el)=>el.closest('[data-brush-for]')?.hidden===true")
         if field:
