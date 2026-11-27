@@ -1,5 +1,11 @@
 // Orthographic projection shared by GPU, editor handles and CPU picking.
 // Alignment is presentation only; logical yaw still indexes six authored views.
+// Match actual viewport aspect at bounded backing resolution, no DPR multiplier.
+export function viewportSize(width,height,{maxWidth=1600,maxHeight=1000,maxPixels=1200000}={}){
+  if(!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0)return null;
+  const factor=Math.min(1,maxWidth/width,maxHeight/height,Math.sqrt(maxPixels/(width*height)));
+  return {width:Math.max(1,Math.floor(width*factor)),height:Math.max(1,Math.floor(height*factor))};
+}
 export const cameraAngle=(yaw,alignment_deg=0)=>(yaw*60+alignment_deg)*Math.PI/180;
 export function project([x,y,z],{yaw=0,alignment_deg=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
   const a=cameraAngle(yaw,alignment_deg),c=Math.cos(a),s=Math.sin(a),v=x*s+y*c;

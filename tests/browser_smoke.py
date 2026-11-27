@@ -12,6 +12,30 @@ with sync_playwright() as p:
     page.goto("http://127.0.0.1:8000/")
     page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
     assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg")==30
+    page.wait_for_function("""()=>{const s=document.querySelector('#scene'),t=document.querySelector('#terrain'),r=s.getBoundingClientRect(),c=JSON.parse(document.querySelector('#status').textContent).camera;return s.width===t.width&&s.height===t.height&&s.width===c.width&&s.height===c.height&&Math.abs(s.width/s.height-r.width/r.height)<.01}""")
+    assert page.evaluate("document.documentElement.scrollHeight===innerHeight")
+    start=page.locator("#viewport").bounding_box()
+    page.locator("#toggleInspector").click()
+    page.wait_for_function("document.querySelector('#scene').width>"+str(int(start["width"])))
+    assert page.locator("#viewport").bounding_box()["width"]>start["width"]
+    page.locator("#toggleInspector").click()
+    page.wait_for_function("Math.abs(document.querySelector('#viewport').clientWidth-"+str(int(start["width"]))+")<2")
+    page.locator('[data-tool="water"]').click()
+    assert page.locator("#paintTool").input_value()=="water"
+    page.locator('[data-tool="select"]').click()
+    assert page.locator("#paintTool").input_value()=="select"
+    page.locator("summary",has_text="Builder painting and edit plans").click()
+    page.locator("#focusWorld").click()
+    assert page.locator("#exitFocus").is_visible()
+    page.locator("#exitFocus").click()
+    page.wait_for_function("!document.querySelector('#workspace').classList.contains('focus-world')")
+    page.set_viewport_size({"width":680,"height":900})
+    page.wait_for_function("document.querySelector('#scene').width<700")
+    assert page.evaluate("document.documentElement.scrollWidth===innerWidth")
+    page.set_viewport_size({"width":1200,"height":1000})
+    page.wait_for_function("Math.abs(document.querySelector('#viewport').clientWidth-"+str(int(start["width"]))+")<2")
+    page.wait_for_function("document.querySelector('#scene').width===document.querySelector('#viewport').clientWidth")
+    page.screenshot(path="/tmp/hex-world-workspace.png")
     page.locator("#cameraAlignment").select_option("0")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg===0")
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
@@ -461,11 +485,11 @@ with sync_playwright() as p:
     # Select the visible front side of the new upper cell, not its top.
     xy=page.evaluate("""async () => {
       const {project}=await import('/src/camera.mjs');
-      return project([1.25,2.165063509,7.5]);
+      return project([1.25,2.165063509,7.5],JSON.parse(document.querySelector('#status').textContent).camera);
     }""")
     page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
-    page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
+    page.mouse.click(box["x"]+xy["x"]*box["width"]/page.locator("#scene").evaluate("(e)=>e.width"),box["y"]+xy["y"]*box["height"]/page.locator("#scene").evaluate("(e)=>e.height"))
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).face==='side:0'")
     assert page.locator("#vertex option").count()==4
     page.locator("#connected").uncheck()
@@ -480,12 +504,12 @@ with sync_playwright() as p:
     box=page.locator("#scene").bounding_box()
     # Drag the actual lower handle past its paired upper vertex.
     handle=page.evaluate("""() => JSON.parse(document.querySelector('#status').textContent).handles.find(h=>h.layer==='lower'&&h.index===0)""")
-    hx=box["x"]+handle["x"]*box["width"]/900
-    hy=box["y"]+handle["y"]*box["height"]/450
+    hx=box["x"]+handle["x"]*box["width"]/page.locator("#scene").evaluate("(e)=>e.width")
+    hy=box["y"]+handle["y"]*box["height"]/page.locator("#scene").evaluate("(e)=>e.height")
     assert page.evaluate("([x,y])=>document.elementFromPoint(x,y)?.id", [hx,hy])=="scene", (box,handle)
     page.mouse.move(hx,hy)
     page.mouse.down()
-    page.mouse.move(box["x"]+handle["x"]*box["width"]/900,box["y"]+(handle["y"]-150)*box["height"]/450,steps=5)
+    page.mouse.move(box["x"]+handle["x"]*box["width"]/page.locator("#scene").evaluate("(e)=>e.width"),box["y"]+(handle["y"]-150)*box["height"]/page.locator("#scene").evaluate("(e)=>e.height"),steps=5)
     page.mouse.up()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.lower[0]===1")
     assert page.locator("#height").get_attribute("max")=="1"
@@ -583,11 +607,11 @@ with sync_playwright() as p:
     page.locator("#movingObject").select_option("demo-actor")
     xy=page.evaluate("""async () => {
       const {project}=await import('/src/camera.mjs');
-      return project([5,0,5]);
+      return project([5,0,5],JSON.parse(document.querySelector('#status').textContent).camera);
     }""")
     page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
-    page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
+    page.mouse.click(box["x"]+xy["x"]*box["width"]/page.locator("#scene").evaluate("(e)=>e.width"),box["y"]+xy["y"]*box["height"]/page.locator("#scene").evaluate("(e)=>e.height"))
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='1,0,0'")
     page.locator("#previewRoute").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).route_steps===1")
@@ -624,7 +648,7 @@ with sync_playwright() as p:
     }""")
     page.locator("#scene").scroll_into_view_if_needed()
     box=page.locator("#scene").bounding_box()
-    page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
+    page.mouse.click(box["x"]+xy["x"]*box["width"]/page.locator("#scene").evaluate("(e)=>e.width"),box["y"]+xy["y"]*box["height"]/page.locator("#scene").evaluate("(e)=>e.height"))
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected.join(',')==='0,0,0'")
     page.locator("#localCut").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cutaway_center?.join(',')==='0,0'")
@@ -731,10 +755,10 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_mode==='island'")
     scene=page.locator("#scene")
     scene.scroll_into_view_if_needed()
-    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return project([5,0,5]);}""")
+    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return project([5,0,5],JSON.parse(document.querySelector('#status').textContent).camera);}""")
     box=scene.bounding_box()
     page.keyboard.down("Shift")
-    page.mouse.click(box["x"]+xy["x"]*box["width"]/900,box["y"]+xy["y"]*box["height"]/450)
+    page.mouse.click(box["x"]+xy["x"]*box["width"]/page.locator("#scene").evaluate("(e)=>e.width"),box["y"]+xy["y"]*box["height"]/page.locator("#scene").evaluate("(e)=>e.height"))
     page.keyboard.up("Shift")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selection.length===2")
     page.get_by_role("button",name="Half",exact=True).click()
@@ -766,10 +790,10 @@ with sync_playwright() as p:
     page.locator("summary",has_text="Builder painting and edit plans").click()
     page.locator("#paintTool").select_option("half")
     scene.scroll_into_view_if_needed()
-    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return [project([-5,0,5]),project([5,0,5])];}""")
+    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return [project([-5,0,5],JSON.parse(document.querySelector('#status').textContent).camera),project([5,0,5],JSON.parse(document.querySelector('#status').textContent).camera)];}""")
     box=scene.bounding_box()
     def screen(v):
-        return box["x"]+v["x"]*box["width"]/900,box["y"]+v["y"]*box["height"]/450
+        return box["x"]+v["x"]*box["width"]/page.locator("#scene").evaluate("(e)=>e.width"),box["y"]+v["y"]*box["height"]/page.locator("#scene").evaluate("(e)=>e.height")
     page.mouse.move(*screen(xy[0]))
     page.mouse.down()
     page.mouse.move(*screen(xy[1]),steps=4)
@@ -810,7 +834,7 @@ with sync_playwright() as p:
     page.locator("#objectDensity").fill("1")
     scene.scroll_into_view_if_needed()
     box=scene.bounding_box()
-    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return project([5,0,2.5]);}""")
+    xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return project([5,0,2.5],JSON.parse(document.querySelector('#status').textContent).camera);}""")
     page.mouse.click(*screen(xy))
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===2")
     page.locator("#undoEdit").click()

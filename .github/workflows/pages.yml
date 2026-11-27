@@ -38,7 +38,9 @@ jobs:
         if: always()
         with:
           name: hex-world-browser-qa
-          path: /tmp/hex-world-qa.png
+          path: |
+            /tmp/hex-world-qa.png
+            /tmp/hex-world-workspace.png
           if-no-files-found: ignore
       - name: Actual published Atlas preview audit (separate external evidence)
         if: github.event_name == 'pull_request'
