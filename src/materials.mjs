@@ -75,6 +75,7 @@ export function weatherSurface(cell,climate,seconds,subdivisions=2){
   const s=surface(cell.components?.surface);
   if(!seconds)return s;
   const {precipitation,temperature_c:temperature,intensity}=climate;
+  assert(["none","rain","snow","hail"].includes(precipitation)&&Number.isFinite(temperature)&&temperature>=-100&&temperature<=100&&unit(intensity)&&(precipitation!=="none"||intensity===0),"Invalid exposure climate");
   const rain=(precipitation==="rain"||precipitation==="hail"||precipitation==="snow"&&temperature>0)?intensity:0;
   const snowfall=precipitation==="snow"&&temperature<=0?intensity:0;
   const submerged=surfaceSubmerged(cell,subdivisions);

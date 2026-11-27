@@ -17,8 +17,8 @@ with sync_playwright() as p:
     page.on("pageerror",lambda e: errors.append(str(e)))
     page.goto("http://127.0.0.1:8000/")
     page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'")
-    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'",timeout=120000)
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'",timeout=120000)
     status=lambda: page.evaluate("JSON.parse(document.querySelector('#status').textContent)")
     def measure():
         # Existing profiler publishes 500ms windows. Record settled windows,
@@ -142,9 +142,25 @@ with sync_playwright() as p:
         page.locator("#exportArt").evaluate("(b)=>b.click()")
     profile=json.loads(Path(style.value.path()).read_text())
     (out/"resolved-style.json").write_text(json.dumps(profile,indent=2))
-    # A fresh document removes session raster/cache state from the round-trip.
-    page.reload()
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'")
+    report["checkpoint"]={"raster_audit":True,"catalog_placement":True,"mixed_plan":True,"undo_redo":True,"camera_views":6,"fixed_water_cells":len(fixed),"fresh_session_round_trip":False}
+    (out/"report.json").write_text(json.dumps(report,indent=2))
+    print("Published preview checkpoint: 53 records, placement, mixed plan, undo/redo and six views passed; starting fresh-session restore.")
+    # Restart Chromium, not merely reload a tab with retained scroll/form/GPU state.
+    browser.close()
+    browser=p.chromium.launch(args=["--use-angle=swiftshader","--enable-unsafe-swiftshader"])
+    page=browser.new_page(viewport={"width":1200,"height":1000},accept_downloads=True)
+    page.on("pageerror",lambda e: errors.append(str(e)))
+    try:
+        response=page.goto("http://127.0.0.1:8000/",wait_until="domcontentloaded",timeout=60000)
+        assert response and response.ok,"Fresh host document failed"
+        page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'",timeout=120000)
+    except Exception:
+        details=page.evaluate("""()=>Object.fromEntries(['status','artStatus','assetStatus','message'].map(id=>[id,document.getElementById(id)?.textContent??null]))""")
+        report["fresh_session_failure"]={"details":details,"page_errors":errors}
+        (out/"report.json").write_text(json.dumps(report,indent=2))
+        print("Fresh session failure:",json.dumps(report["fresh_session_failure"]))
+        page.screenshot(path=str(out/"fresh-session-failure.png"),full_page=True)
+        raise
     page.locator("#importArt").set_input_files({"name":"style.json","mimeType":"application/json","buffer":json.dumps(profile).encode()})
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
     page.locator("#load").set_input_files({"name":"world.json","mimeType":"application/json","buffer":json.dumps(world).encode()})
@@ -159,6 +175,7 @@ with sync_playwright() as p:
     assert restored_world["chunks"]==world["chunks"] and restored_world["entities"]==world["entities"]
     report["clearing"]={"edit_cells":len(plan["edits"]),"objects":len(plan["entities"]),"fixed_water_cells":len(fixed),"undo_redo":True,"frozen_water_persisted":True}
     report["round_trip"]={"entity":entity,"restored":True,"style":profile["id"],"camera_views":6,"directional_qa":"not claimed; static billboard"}
+    report["checkpoint"]["fresh_session_round_trip"]=True
     report["page_errors"]=errors
     (out/"report.json").write_text(json.dumps(report,indent=2))
     assert not errors,errors

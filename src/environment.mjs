@@ -1,4 +1,5 @@
 // Spatial host conditions and pure visual responses. No physics or renderer state.
+import {stableUnit} from "./materials.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const finite=(v,min,max)=>Number.isFinite(v)&&v>=min&&v<=max;
 const record=v=>v&&typeof v==="object"&&!Array.isArray(v);
@@ -87,4 +88,35 @@ export function composeBend(neutral,contact,offset,height){
   if(d<1e-8)return neutral;
   const scale=Math.min(1,height/d);
   return neutral.map((p,i)=>i<2?[p[0]+dx*scale,p[1]+dy*scale,p[2]]:p);
+}
+
+// Lightweight, read-only precipitation presentation. Only topmost rendered
+// terrain triangles in each column participate; no claim of roof/sky simulation.
+// The caller supplies the real, uncut terrain and a camera-visible subset.
+export function precipitationPlan(faces,visible,field,seed,{limit=192}={}){
+  assert(Number.isSafeInteger(limit)&&limit>=0&&limit<=1024,"Invalid precipitation budget");
+  if(!limit||![field.climate,...field.zones.map(z=>z.climate)].some(c=>c?.intensity>0&&c.precipitation!=="none"))return [];
+  const column=a=>a.slice(0,2).join(","),top=new Map(),climates=new Map(),winds=new Map(),candidates=[];
+  for(const f of faces)if(f.kind==="top"){const key=column(f.address);top.set(key,Math.max(top.get(key)??-Infinity,f.address[2]));}
+  for(const f of visible){
+    if(f.kind!=="top"||f.address[2]!==top.get(column(f.address)))continue;
+    const key=f.address.join(",");
+    if(!climates.has(key))climates.set(key,climateAt(field,f.address));
+    const c=climates.get(key);if(!c.intensity||c.precipitation==="none")continue;
+    const id=[...f.address,f.triangle];
+    if(stableUnit(seed,id,"precipitation-density")>=c.intensity)continue;
+    if(!winds.has(key))winds.set(key,windAt(field,f.address));
+    const u=Math.sqrt(stableUnit(seed,id,"precipitation-u")),v=stableUnit(seed,id,"precipitation-v");
+    const weights=[1-u,u*(1-v),u*v],point=[0,1,2].map(i=>f.points.reduce((n,p,j)=>n+p[i]*weights[j],0));
+    candidates.push({id,point,kind:c.precipitation,wind:winds.get(key),phase:stableUnit(seed,id,"precipitation-phase"),rank:stableUnit(seed,id,"precipitation-priority")});
+  }
+  candidates.sort((a,b)=>a.rank-b.rank||a.id.join(",").localeCompare(b.id.join(",")));
+  return candidates.slice(0,limit);
+}
+export function precipitationParticle(sample,seconds){
+  const snow=sample.kind==="snow",hail=sample.kind==="hail",height=8,speed=snow?2.5:hail?24:18;
+  const progress=((seconds*speed/height+sample.phase)%1+1)%1,remaining=(1-progress)*height;
+  const wind=sampleWind(sample.wind,sample.point,seconds),length=Math.hypot(...wind);
+  const drift=length?Math.min(.9,length*.08)*remaining/height:0;
+  return {kind:sample.kind,point:[sample.point[0]-(length?wind[0]/length*drift:0),sample.point[1]-(length?wind[1]/length*drift:0),sample.point[2]+remaining],width:snow?.22:hail?.18:.12,height:snow?.22:hail?.18:.95};
 }

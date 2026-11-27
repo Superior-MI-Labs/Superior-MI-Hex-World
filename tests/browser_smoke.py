@@ -318,6 +318,28 @@ with sync_playwright() as p:
     page.locator("#season").select_option("summer")
     page.locator("#applyClimate").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).seasonal_sprites===0")
+    # Weather is presentation until an ordinary reviewed exposure plan is applied.
+    baseline_weather=page.evaluate("JSON.parse(document.querySelector('#status').textContent)")
+    page.locator("#precipitation").select_option("rain")
+    page.locator("#precipIntensity").fill("1")
+    page.locator("#applyClimate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances>0")
+    page.locator("#weatherVisual").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances===0")
+    page.locator("#weatherVisual").check()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances>0")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).cell")==baseline_weather["cell"]
+    page.locator("#exposureSeconds").fill("3600")
+    page.locator("#previewExposure").click()
+    page.wait_for_function("!document.querySelector('#applyEditPlan').disabled")
+    page.locator("#applyEditPlan").evaluate("(b)=>b.click()")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.moisture>.9")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).simulation_seconds")==baseline_weather["simulation_seconds"]
+    page.locator("#undoEdit").click()
+    page.wait_for_function("c=>JSON.stringify(JSON.parse(document.querySelector('#status').textContent).cell)===JSON.stringify(c)",arg=baseline_weather["cell"])
+    page.locator("#precipitation").select_option("none")
+    page.locator("#applyClimate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances===0")
     # Local resolved style round-trip, with failure preserving current style.
     with page.expect_download() as style_download:
         page.locator("#exportArt").click()

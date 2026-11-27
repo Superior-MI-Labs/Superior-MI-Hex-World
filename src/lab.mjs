@@ -19,7 +19,7 @@ import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettle
 import {contactShadows,terrainOcclusion,directionalShadows,collectPointLights,selectPointLights} from "./lighting.mjs";
 import {objectVolumes} from "./collision.mjs";
 import {buildScatterPlan,promoteSample} from "./scatter.mjs";
-import {CALM,validateWater,DEFAULT_LIGHTING,validateLighting,validateLightSource,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend} from "./environment.mjs";
+import {CALM,validateWater,DEFAULT_LIGHTING,validateLighting,validateLightSource,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend,precipitationPlan,precipitationParticle} from "./environment.mjs";
 import {validateInteractions,interactionTags,cellTarget,entityTarget,contactResponse,bendBillboard} from "./interactions.mjs";
 import {validatePrefab,planPrefab,capturePrefab} from "./prefabs.mjs";
 import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit,surfaceSubmerged} from "./materials.mjs";
@@ -37,7 +37,7 @@ const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},
 const islandDomain=island.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
 let ground=island,domain=islandDomain,worldMode="island",regionKey="",cameraKey="",activeChunks=0;
 let regionBounds=null,wireCells=new Map(),history=null,stagedPlan=null,gesture=null,waypoints=[];
-let renderYaw=0,turn=null,selection=[[0,0,0]],keys=new Set(),visibleCache=null,grassCache=new WeakMap(),shadowCache=null;
+let renderYaw=0,turn=null,selection=[[0,0,0]],keys=new Set(),visibleCache=null,grassCache=new WeakMap(),shadowCache=null,weatherCache=null;
 function camera(){return {yaw:renderYaw,alignment_deg:Number($("cameraAlignment").value),scale,width:canvas.width,height:canvas.height,panX,panY};}
 function refreshRegion(force=false){
   if(worldMode!=="exploration")return;
@@ -260,6 +260,14 @@ $("applyCollider").onclick=async()=>{
 $("rotateObject").onclick=()=>{const e=world.getEntity($("objects").value);if(e){commitObjects([{id:e.id,value:{...e,orientation_steps:((e.orientation_steps??0)+1)%6}}],"Rotate object");}};
 $("removeObject").onclick=()=>{const id=$("objects").value;if(world.getEntity(id))commitObjects([{id,value:null}],"Remove object");};
 
+// Small host-generated weather textures share the existing GPU sprite path.
+// They are not published Atlas assets or persistent effects.
+const weatherTextures=new Map(["rain","snow","hail"].map(kind=>{
+  const c=document.createElement("canvas");c.width=8;c.height=kind==="rain"?32:8;const g=c.getContext("2d");
+  g.fillStyle=kind==="rain"?"#b6d8ed":"#f1f6ff";
+  if(kind==="rain")g.fillRect(2,1,4,30);else{g.beginPath();g.arc(4,4,3,0,Math.PI*2);g.fill();}
+  return [kind,c];
+}));
 // Temporary transparent vertical artwork, not an Atlas release.
 const tufts=new Map(catalog.vegetation.variants.map(v=>{
   const c=document.createElement("canvas");c.width=c.height=64;const g=c.getContext("2d");
@@ -678,6 +686,19 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     sprites.push({image:r.image,revision:r.revision,emissive:e.light?.emissive??0,points:flex(billboard(p,renderYaw,s.width,s.height,r.pivot,alignment),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
     if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,height:s.height,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
   }
+  const weatherSprites=[];
+  if($("weatherVisual").checked&&cutLevel()===null){
+    // Cached by terrain/visibility identity and environmental inputs, not visual time.
+    const key=JSON.stringify([field.climate,field.wind,field.zones,seed,windEnabled]);
+    if(!weatherCache||weatherCache.faces!==faces||weatherCache.visible!==visible||weatherCache.key!==key){
+      const weatherField=windEnabled?field:{...field,wind:CALM,zones:field.zones.map(z=>({...z,wind:z.wind?CALM:undefined}))};
+      weatherCache={faces,visible,key,plan:precipitationPlan(faces,visible,weatherField,seed)};
+    }
+    for(const sample of weatherCache.plan){
+      const p=precipitationParticle(sample,clock.visual);
+      weatherSprites.push({image:weatherTextures.get(p.kind),revision:0,hardAlpha:true,emissive:.3,points:billboard(p.point,renderYaw,p.width,p.height,[.5,.5],alignment)});
+    }
+  }
   const spriteMS=performance.now()-spritesStart,shadowStart=performance.now(),light=field.lighting??(styled?art.profile.lighting:null),shadowKey=JSON.stringify([light,$("contactShadows").checked,$("directionalShadows").checked,shadowObjects]);
   if(!shadowCache||shadowCache.visible!==visible||shadowCache.key!==shadowKey)shadowCache={visible,key:shadowKey,shadows:$("contactShadows").checked?contactShadows(visible,shadowObjects):[],sun:light&&$("directionalShadows").checked?directionalShadows(visible,shadowObjects,light,grid):{faces:[],truncated:false}};
   const {shadows,sun}=shadowCache;
@@ -685,7 +706,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const local=$("pointLights").checked?selectPointLights(collectPointLights(world,{simulationTime:clock.simulation,visualTime:clock.visual,poses,displayed:displayedAddress}),[...visible,...water],sprites):{lights:[],omitted:0};
   const walls=[];for(const [a,b] of selectionEdges(world,selection.filter(displayedAddress),grid)){const up=p=>[p[0],p[1],p[2]+grid.vertical_ft*.18],lo=p=>[p[0],p[1],p[2]+.015];walls.push({points:[lo(a),lo(b),up(b)],fade:[0,0,1]},{points:[lo(a),up(b),up(a)],fade:[0,1,1]});}
   const shadowMS=performance.now()-shadowStart,renderStart=performance.now();
-  gpu.render(visible,view,{projectionKey:ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
+  gpu.render(visible,view,{projectionKey:ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
   const renderMS=performance.now()-renderStart;
   if($("wire").checked){
     if(!wireCells.has(selected[2]))wireCells.set(selected[2],domain.filter(a=>a[2]===selected[2]&&!hasVolume(world.get(...a).shape)));
@@ -735,7 +756,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const timing={frame_ms:performance.now()-started,frame_interval_ms:interval,terrain_ms:terrainMS,sprites_ms:spriteMS,shadow_ms:shadowMS,render_ms:renderMS};
   profileSamples++;if(interval>0)profileIntervals.push(interval);for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
   if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;profileIntervals.sort((a,b)=>a-b);profileFrame.interval_p95_ms=Math.round((profileIntervals[Math.max(0,Math.ceil(profileIntervals.length*.95)-1)]??0)*10)/10;profileFrame.interval_max_ms=Math.round((profileIntervals.at(-1)??0)*10)/10;profileFrame.samples=profileSamples;Object.assign(profileFrame,gpu.diagnostics(),phasePool.diagnostics());profileSamples=0;profileSum={};profileIntervals=[];$("performanceStatus").textContent=JSON.stringify(profileFrame);}
-  $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,precipitation_instances:weatherSprites.length,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 

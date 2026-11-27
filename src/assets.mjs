@@ -137,7 +137,7 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest
 // Canonical Atlas frame timing: authored holds plus default-rate frames.
 // No change to the vendor renderer or asset schema.
 export function cyclicRegionPeriod(sequence,assets){
-  if(sequence?.kind!=="sequence"||!["loop","pingpong"].includes(sequence.playback)||sequence.frames.length<2||!sequence.frames.every(f=>assets.get(f.asset)?.kind==="region"))return 0;
+  if(sequence?.kind!=="sequence"||!["loop","pingpong"].includes(sequence.playback)||!Array.isArray(sequence.frames)||sequence.frames.length<2||!sequence.frames.every(f=>assets.get(f.asset)?.kind==="region"))return 0;
   let holds=0,defaults=0;
   for(const f of sequence.frames){if(f.duration_ms)holds+=f.duration_ms;else defaults++;}
   const total=(holds+defaults*1000/sequence.default_fps)*(sequence.playback==="pingpong"?2:1);

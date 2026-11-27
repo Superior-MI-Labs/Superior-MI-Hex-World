@@ -18,8 +18,10 @@ test("authored exposure preserves geometry and water, thaws snow, and submerged 
  const cell={material:"soil",shape:{lower:Array(7).fill(0),upper:Array(7).fill(1)},components:{surface:{growth:.8,snow:.8,burn:4},water:{fill:.8,fixed:true}}};
  const climate={season:"summer",temperature_c:20,precipitation:"none",intensity:0};
  assert.equal(surfaceSubmerged(cell),true);
+ assert.equal(ignite(catalog,{...cell,components:{...cell.components,surface:{growth:.8}}}).burn,0);
  const result=weatherSurface(cell,climate,600);
  assert.equal(result.moisture,1);assert.equal(result.burn,0);assert.ok(result.snow<.8);
  assert.equal(cell.components.surface.burn,4);assert.equal(cell.components.water.fixed,true);
+ assert.throws(()=>weatherSurface(cell,{...climate,intensity:2},600),/Invalid exposure climate/);
  assert.equal(surfaceSubmerged({...cell,shape:{...cell.shape,upper:Array(7).fill(2)}}),false);
 });
