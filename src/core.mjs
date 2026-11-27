@@ -59,6 +59,7 @@ export class World {
   setEnvironment(value){this.#config.environment=validateEnvironment(value);}
   get chunkCount(){return this.#chunks.size;}
   get entityCount(){return this.#entities.size;}
+  get geometryRevision(){return this.#revision;}
   get collisionRevision(){return this.#collisionRevision;}
   effects(){return [...this.#effects.values()].map(copy);}
   putEffect(value){const e=validatePlacedEffect(value);requireThat(this.get(...e.address),"Unknown effect cell");requireThat(!this.#effects.has(e.id),"Duplicate effect ID");this.#effects.set(e.id,e);}

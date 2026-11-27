@@ -288,7 +288,11 @@ with sync_playwright() as p:
       const masked={...actor,emissive:1,emissiveMask:mask,points:[[5,5,2],[35,5,2],[35,25,2],[5,25,2]]};
       r.render([face],view,{pattern:false,lighting,sprites:[masked]});const dark=r.readPixel(7,12),bright=r.readPixel(32,12);
       r.render([face],view,{pattern:false,lighting,sprites:[masked],softSprites:true});const softDark=r.readPixel(7,12),softBright=r.readPixel(32,12);
-      return {center,far,off,sprite,emissive,dark,bright,softDark,softBright};
+      const {POINT_SHADOW_WIDTH,POINT_SHADOW_HEIGHT,POINT_SHADOW_LIMIT}=await import('/src/lighting.mjs');
+      const occluder={ids:['test'],data:new Uint8Array(POINT_SHADOW_WIDTH*POINT_SHADOW_HEIGHT*POINT_SHADOW_LIMIT)};
+      r.render([face],view,{pattern:false,lighting,pointLights:[{...light,id:'test'}],pointShadow:occluder});const shadowed=r.readPixel(17,12);
+      r.render([face],view,{pattern:false,lighting,pointLights:[{...light,id:'test'}]});const unshadowed=r.readPixel(17,12);
+      return {center,far,off,sprite,emissive,dark,bright,softDark,softBright,shadowed,unshadowed};
     }""")
     assert local_light["center"][0]>120 and local_light["center"][1]<35,local_light
     assert local_light["far"]==local_light["off"],local_light
@@ -297,6 +301,7 @@ with sync_playwright() as p:
     assert all(140<v<180 for v in local_light["dark"][:3]),local_light
     assert all(v>245 for v in local_light["bright"][:3]),local_light
     assert local_light["softDark"]==local_light["dark"] and local_light["softBright"]==local_light["bright"],local_light
+    assert local_light["shadowed"]==local_light["off"] and local_light["unshadowed"][0]>local_light["shadowed"][0]+15,local_light
     # Lighting also shades full snow coverage and preserves unlit debug colors.
     lit=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -642,6 +647,11 @@ with sync_playwright() as p:
     page.locator("summary",has_text="Object light source").click()
     page.locator("#applyObjectLight").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).point_lights>0")
+    page.locator("#pointOcclusion").check()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).point_shadow.lights>0")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).point_shadow.cache_hit")
+    page.locator("#pointOcclusion").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).point_shadow.lights===0")
     page.locator("#pointLights").uncheck()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).point_lights===0")
     page.locator("#pointLights").check()
