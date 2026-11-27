@@ -269,6 +269,19 @@ with sync_playwright() as p:
     page.locator("#season").select_option("summer")
     page.locator("#applyClimate").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).seasonal_sprites===0")
+    # Local resolved style round-trip, with failure preserving current style.
+    with page.expect_download() as style_download:
+        page.locator("#exportArt").click()
+    exported_style=json.loads(Path(style_download.value.path()).read_text())
+    assert exported_style["detail"]["top"]["manifest"].startswith("http://127.0.0.1:8000/")
+    exported_style["id"]="imported-fixture-style"
+    page.locator("#importArt").set_input_files({"name":"style.json","mimeType":"application/json","buffer":json.dumps(exported_style).encode()})
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='imported-fixture-style'")
+    page.locator("#importArt").set_input_files({"name":"bad-style.json","mimeType":"application/json","buffer":b"{}"})
+    page.wait_for_function("document.querySelector('#artStatus').textContent.startsWith('Previous style retained:')")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).art_style")=="imported-fixture-style"
+    page.locator("#resetArt").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'")
     page.locator("#artURL").fill("./examples/no-such-style.json")
     page.locator("#loadArt").click()
     page.wait_for_function("document.querySelector('#artStatus').textContent.startsWith('Previous style retained:')")

@@ -10,7 +10,7 @@ import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
 import {ATLAS_CATALOG,fetchCatalog,searchCatalog} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
-import {fetchStyle,loadStyle,validateStyleVariants,woodlandPreviewStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
+import {fetchStyle,loadStyle,validateStyle,validateStyleVariants,woodlandPreviewStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection,colliderActive,validateCollider} from "./entities.mjs";
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
@@ -415,6 +415,15 @@ $("loadWoodlandPreview").onclick=()=>loadArt(null,async()=>{
   return loadStyle(validateStyleVariants(woodlandPreviewStyle(fixture,entries,url.href),catalog));
 });
 $("exportArt").onclick=()=>{if(art)downloadJSON(art.profile,"hex-art-style.json");};
+$("importArt").onchange=()=>{
+  const file=$("importArt").files[0];$("importArt").value="";
+  if(!file)return;
+  loadArt(null,async()=>{
+    if(file.size>1e6)throw Error("Style exceeds size limit");
+    const profile=validateStyleVariants(validateStyle(JSON.parse(await file.text())),catalog);
+    return loadStyle(profile);
+  });
+};
 $("resetArt").onclick=()=>{$("artURL").value=fixtureStyle;loadArt(fixtureStyle);};
 $("promoteScatter").onclick=()=>{try{if(dirty||scatterDirty)throw Error("Wait for terrain refresh");const sample=scatterChoices.find(s=>s.key===$("scatterChoice").value&&s.address.every((v,i)=>v===selected[i]));if(!sample||!art)throw Error("Select a decorative sample");promoteSample(world,art,sample,crypto.randomUUID());dirty=true;sync();$("message").textContent="Decoration promoted to persistent object";}catch(e){$("message").textContent=e.message;}};
 loadArt(fixtureStyle);

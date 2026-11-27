@@ -1,5 +1,6 @@
 """Live published Atlas audit: requires local HTTP server and Playwright."""
 import json
+import statistics
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -11,9 +12,24 @@ counts={"fantasy-recovered-grass-20261125":12,"fantasy-recovered-foliage-2026112
         "painterly-fantasy-woodland":9}
 with sync_playwright() as p:
     browser=p.chromium.launch(args=["--use-angle=swiftshader","--enable-unsafe-swiftshader"])
-    page=browser.new_page(viewport={"width":1200,"height":1000})
+    page=browser.new_page(viewport={"width":1200,"height":1000},accept_downloads=True)
+    errors=[]
+    page.on("pageerror",lambda e: errors.append(str(e)))
     page.goto("http://127.0.0.1:8000/")
     page.wait_for_function("document.querySelector('#status').textContent.includes('WebGL2')")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'")
+    status=lambda: page.evaluate("JSON.parse(document.querySelector('#status').textContent)")
+    def measure():
+        # Existing profiler publishes 500ms windows. Record settled windows,
+        # never impose a hardware-specific FPS gate on software WebGL.
+        page.wait_for_timeout(1500)
+        samples=[]
+        for _ in range(5):
+            page.wait_for_timeout(600)
+            s=status()
+            samples.append({k:s[k] for k in ("performance","camera","visible_triangles","vegetation_instances","scatter_instances","object_instances","resident_chunks")})
+        return {"samples":samples,"median_frame_ms":statistics.median(s["performance"]["frame_ms"] for s in samples)}
+    fixture_performance=measure()
     report=page.evaluate("""async counts=>{
       const {fetchCatalog}=await import('/src/catalog.mjs');
       const {openAtlasPack}=await import('/src/assets.mjs');
@@ -51,11 +67,64 @@ with sync_playwright() as p:
       return {packs,rows};
     }""",counts)
     (out/"report.json").write_text(json.dumps(report,indent=2))
-    page.locator("#loadWoodlandPreview").evaluate("(b)=>b.click()")
-    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
-    page.screenshot(path=str(out/"woodland.png"))
     assert len(report["rows"])==sum(counts.values()),report["packs"]
     assert all(p["ok"] for p in report["packs"]),report["packs"]
     assert all(r["ok"] for r in report["rows"]),[r for r in report["rows"] if not r["ok"]]
-    print("Published preview: all 53 records rasterized; artistic and directional qualification pending.")
+    page.locator("#loadWoodlandPreview").evaluate("(b)=>b.click()")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
+    report["performance"]={"fixture":fixture_performance,"woodland":measure(),"note":"Same island/camera; CI SwiftShader, not target hardware"}
+    (out/"report.json").write_text(json.dumps(report,indent=2))
+    # Select a published chest through the existing catalog, not a special-case loader.
+    asset="smi.world.fantasy.recovered.chests-20261125.weathered-wood-chest"
+    page.locator("summary",has_text="Browse published Atlas assets").click()
+    page.locator("#refreshCatalog").click()
+    page.wait_for_function("document.querySelector('#catalogDomain').value==='world-environment'",timeout=120000)
+    page.locator("#catalogSearch").fill(asset)
+    page.wait_for_function("document.querySelector('#catalogAssets').options.length===1")
+    page.locator("#loadCatalogAsset").click()
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'",timeout=120000)
+    before=status()["world_objects"]
+    page.locator("#placeActor").click()
+    page.wait_for_function("n=>JSON.parse(document.querySelector('#status').textContent).world_objects===n+1",arg=before)
+    page.locator("#objects").select_option(index=before)
+    page.wait_for_function("id=>JSON.parse(document.querySelector('#status').textContent).selected_object_view===id",arg=asset)
+    entity_id=page.locator("#objects").input_value()
+    page.locator("#rotateObject").click()
+    page.wait_for_function("document.querySelector('#objectOrientation').textContent==='60°'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).unresolved_objects===0")
+    for yaw in range(6):
+        page.wait_for_function("yaw=>{const c=JSON.parse(document.querySelector('#status').textContent).camera;return c.yaw===yaw&&!c.rotating}",arg=yaw)
+        page.locator("#scene").screenshot(path=str(out/f"woodland-view-{yaw}.png"))
+        page.locator("#rotate").click()
+    page.wait_for_function("(()=>{const c=JSON.parse(document.querySelector('#status').textContent).camera;return c.yaw===0&&!c.rotating})()")
+    with page.expect_download() as saved:
+        page.locator("#save").click()
+    world=json.loads(Path(saved.value.path()).read_text())
+    entity=next(e for e in world["entities"] if e["id"]==entity_id)
+    assert entity["orientation_steps"]==1 and entity["visual"]["asset"]==asset and entity["visual"]["height_ft"]==2.5
+    pack=next(p for p in report["packs"] if p["id"]=="fantasy-recovered-chests-20261125")
+    assert entity["visual"]["archive_sha256"]==pack["archive_sha256"]
+    with page.expect_download() as style:
+        page.locator("#exportArt").evaluate("(b)=>b.click()")
+    profile=json.loads(Path(style.value.path()).read_text())
+    (out/"resolved-style.json").write_text(json.dumps(profile,indent=2))
+    # A fresh document removes session raster/cache state from the round-trip.
+    page.reload()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'")
+    page.locator("#importArt").set_input_files({"name":"style.json","mimeType":"application/json","buffer":json.dumps(profile).encode()})
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
+    page.locator("#load").set_input_files({"name":"world.json","mimeType":"application/json","buffer":json.dumps(world).encode()})
+    page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n}",arg=before+1,timeout=120000)
+    page.locator("#objects").select_option(value=entity_id)
+    assert page.locator("#objectOrientation").text_content()=="60°"
+    with page.expect_download() as restored:
+        page.locator("#save").click()
+    recovered=next(e for e in json.loads(Path(restored.value.path()).read_text())["entities"] if e["id"]==entity_id)
+    assert recovered==entity
+    report["round_trip"]={"entity":entity,"restored":True,"style":profile["id"],"camera_views":6,"directional_qa":"not claimed; static billboard"}
+    report["page_errors"]=errors
+    (out/"report.json").write_text(json.dumps(report,indent=2))
+    assert not errors,errors
+    print("Published preview: 53 raster records, six camera captures, pinned object and style round-trip passed; artistic/directional qualification pending.")
     browser.close()
