@@ -114,6 +114,9 @@ with sync_playwright() as p:
         print("Clearing preview failure:",page.locator("#planStatus").text_content())
         page.screenshot(path=str(out/"clearing-failure.png"),full_page=True)
         raise
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.preview_sprites===2",timeout=120000)
+    assert status()['world_objects']==before
+    page.locator('#viewport').screenshot(path=str(out/'woodland-placement-preview.png'))
     with page.expect_download() as staged:
         page.locator("#exportStagedPlan").evaluate("(b)=>b.click()")
     plan=json.loads(Path(staged.value.path()).read_text())
@@ -122,6 +125,7 @@ with sync_playwright() as p:
     entity_id=next(e["id"] for e in plan["entities"] if e["value"]["visual"]["asset"]==asset)
     page.locator("#applyEditPlan").evaluate("(b)=>b.click()")
     total=before+2
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.preview_sprites===0")
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.water_triangles>0&&s.unresolved_objects===0}",arg=total)
     page.locator("#undoEdit").click()
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n-2&&s.water_triangles===0}",arg=total)

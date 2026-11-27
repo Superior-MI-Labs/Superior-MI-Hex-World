@@ -285,6 +285,19 @@ with sync_playwright() as p:
     assert liquid["wet"][2]>liquid["wet"][0] and liquid["wet"]!=liquid["dry"],liquid
     assert liquid["blocked"][0]>240 and liquid["blocked"][2]<10,liquid
     assert liquid["wet"]!=liquid["moved"],liquid
+    # A preview uses real sprite pixels but must respect the existing depth buffer.
+    ghost=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs'),c=document.createElement('canvas');c.width=c.height=32;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const face={kind:'top',color:[0,1,0],points:[[0,0,1],[32,0,1],[0,32,1]]};
+      const img=document.createElement('canvas');img.width=img.height=1;const g=img.getContext('2d');g.fillStyle='red';g.fillRect(0,0,1,1);
+      const a=z=>({image:img,revision:0,points:[[2,2,z],[12,2,z],[12,12,z],[2,12,z]],previewColor:[1,0,0],previewOpacity:.5});
+      r.render([face],view,{pattern:false});const base=r.readPixel(5,5);
+      r.render([face],view,{pattern:false,previews:[a(0)]});const blocked=r.readPixel(5,5);
+      r.render([face],view,{pattern:false,previews:[a(2)]});const front=r.readPixel(5,5);
+      return {base,blocked,front};
+    }""")
+    assert ghost['blocked']==ghost['base'] and 110<ghost['front'][0]<145 and 110<ghost['front'][1]<145,ghost
     # Per-fragment local light illuminates terrain and sprites in world space.
     local_light=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
