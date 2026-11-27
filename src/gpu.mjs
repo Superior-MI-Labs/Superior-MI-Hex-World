@@ -106,8 +106,26 @@ export function createRenderer(canvas){
     const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,88,offset);
   }
   return {vao,buffer};}
-  const {vao,buffer}=geometryBuffer();let terrainCache=null,projectionCache=null,terrainUploads=0,terrainCacheHit=false,drawCalls=0;
-  function releaseTerrain(){if(terrainCache)for(const b of terrainCache.batches.values())if(b.gpu){gl.deleteVertexArray(b.gpu.vao);gl.deleteBuffer(b.gpu.buffer);}terrainCache=null;}
+  const {vao,buffer}=geometryBuffer();let terrainCache=null,projectionCache=null,terrainUploads=0,terrainCacheHit=false,drawCalls=0,terrainBytes=0;
+  // Optional nonblocking GPU timing, enabled only for explicit captures.
+  const timer=gl.getExtension("EXT_disjoint_timer_query_webgl2");
+  let timingEnabled=false,timingPending=[],timingSamples=[],timingDiscarded=0;
+  function setTimingEnabled(enabled){
+    enabled=!!enabled;if(enabled===timingEnabled)return;timingEnabled=enabled;
+    for(const q of timingPending)gl.deleteQuery(q);timingPending=[];timingSamples=[];timingDiscarded=0;
+  }
+  function beginTiming(){
+    timingSamples=[];if(!timer||!timingEnabled)return null;
+    if(gl.getParameter(timer.GPU_DISJOINT_EXT)){timingDiscarded+=timingPending.length;for(const q of timingPending)gl.deleteQuery(q);timingPending=[];return null;}
+    while(timingPending.length&&gl.getQueryParameter(timingPending[0],gl.QUERY_RESULT_AVAILABLE)){
+      const q=timingPending.shift(),ns=gl.getQueryParameter(q,gl.QUERY_RESULT);gl.deleteQuery(q);
+      if(Number.isFinite(ns)&&ns>=0)timingSamples.push(ns/1e6);
+    }
+    if(timingPending.length>=4)return null;
+    const q=gl.createQuery();if(!q)return null;gl.beginQuery(timer.TIME_ELAPSED_EXT,q);return q;
+  }
+  function endTiming(q){if(q){gl.endQuery(timer.TIME_ELAPSED_EXT);timingPending.push(q);}}
+  function releaseTerrain(){if(terrainCache)for(const b of terrainCache.batches.values())if(b.gpu){gl.deleteVertexArray(b.gpu.vao);gl.deleteBuffer(b.gpu.buffer);}terrainCache=null;terrainBytes=0;}
   const waterTime=gl.getUniformLocation(program,"u_water_time");
   const mode=gl.getUniformLocation(program,"u_mode"),lightCount=gl.getUniformLocation(program,"u_light_count"),lightPos=gl.getUniformLocation(program,"u_light_pos[0]"),lightRGB=gl.getUniformLocation(program,"u_light_rgb[0]"),lightShadow=gl.getUniformLocation(program,"u_light_shadow[0]");
   const uniforms=Object.fromEntries(["u_detail_strength","u_color_modes","u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
@@ -172,13 +190,18 @@ export function createRenderer(canvas){
     record.lastUsed=spriteFrame;return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;drawCalls++;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
-  function drawTerrain(batch,tex,m,cacheHit){
-    if(!cacheHit){terrainUploads++;draw(batch.data,tex,m);return;}
-    if(!batch.gpu){batch.gpu=geometryBuffer();gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(batch.data),gl.STATIC_DRAW);terrainUploads++;}
-    drawCalls++;gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.data.length/22);
+  function drawTerrain(batch,tex,m,persistent){
+    if(!persistent){if(batch.data.length){terrainUploads++;draw(batch.data,tex,m);}return;}
+    if(!batch.gpu){
+      if(!batch.data.length)return;
+      const data=new Float32Array(batch.data);batch.count=data.length/22;batch.gpu=geometryBuffer();
+      gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);terrainUploads++;terrainBytes+=data.byteLength;batch.data=null;
+    }
+    drawCalls++;gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.count);
     gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   }
   function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],pointShadow=null,softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
+    const query=beginTiming();
     // Keep the auxiliary sampler complete even when a previous masked sprite was evicted.
     gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
@@ -203,7 +226,8 @@ export function createRenderer(canvas){
     const projected=projectionCache.projected,actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
     const waterProjected=water.map(f=>({f,p:f.points.map(view)})),walls=selectionWalls.map(f=>({f,p:f.points.map(view)}));
     let {low,high}=projectionCache;
-    for(const items of [actors.map(a=>a.quad),waterProjected.map(f=>f.p),walls.map(f=>f.p)])for(const points of items)for(const p of points){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
+    for(const a of actors)for(const p of a.quad){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
+    for(const items of [waterProjected,walls])for(const {p:points} of items)for(const p of points){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
     if(!Number.isFinite(low)){low=0;high=1;}
     // Stable padded bounds avoid repacking terrain for small sprite motion.
     if(projectionKey!==null){low=Math.floor(low/5)*5;high=Math.ceil(high/5)*5;}
@@ -233,14 +257,19 @@ export function createRenderer(canvas){
       const textures=keys.map(k=>style?(detailTextures.get(detailKey(role,k))??detailTextures.get(detailKey(role,null))??ground):ground);
       for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,textures[i]??ground);}
       gl.activeTexture(gl.TEXTURE0);gl.uniform4iv(uniforms.u_color_modes,Array.from({length:4},(_,i)=>modes[i]==="albedo"?2:modes[i]==="rgb_detail"?1:0));
-      drawTerrain(batch,textures[0]??ground,pattern?1:0,cacheHit);
+      drawTerrain(batch,textures[0]??ground,pattern?1:0,projectionKey!==null);
     }
     if(shadows.length&&!debug){const data=[];for(const f of shadows){const p=f.points.map(view);for(let i=0;i<3;i++)pack(data,p[i],[f.opacity,0,0],f.uv[i]);}gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,shadowTexture,5);gl.depthMask(true);gl.disable(gl.BLEND);}
     const batches=new Map(),cutouts=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
-    const texturePairs=new Map();
+    const texturePairs=new Map(),frameTextures=new Map();
+    function frameTexture(actor){
+      used.add(actor.image);const cached=frameTextures.get(actor.image);
+      if(cached?.revision===actor.revision&&cached)return cached.tex;
+      const tex=spriteTexture(actor);frameTextures.set(actor.image,{tex,revision:actor.revision});return tex;
+    }
     function spritePair(actor){
-      used.add(actor.image);const tex=spriteTexture(actor);
-      let mask=null;if(actor.emissiveMask){used.add(actor.emissiveMask);mask=spriteTexture({image:actor.emissiveMask,revision:0});}
+      const tex=frameTexture(actor);
+      let mask=null;if(actor.emissiveMask)mask=frameTexture({image:actor.emissiveMask,revision:0});
       if(!texturePairs.has(tex))texturePairs.set(tex,new Map());const pairs=texturePairs.get(tex);
       if(!pairs.has(mask))pairs.set(mask,{tex,mask});return pairs.get(mask);
     }
@@ -249,7 +278,7 @@ export function createRenderer(canvas){
       gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,pair.mask??ground);gl.activeTexture(gl.TEXTURE0);
       draw(batch,pair.tex,m);
     }
-    for(const {actor,quad} of actors){const pair=spritePair(actor),target=softSprites&&!actor.hardAlpha?batches:cutouts,batch=target.get(pair)??[];packSprite(batch,actor,quad);target.set(pair,batch);}
+    for(const entry of actors){const {actor,quad}=entry,pair=entry.pair=spritePair(actor),target=softSprites&&!actor.hardAlpha?batches:cutouts,batch=target.get(pair)??[];packSprite(batch,actor,quad);target.set(pair,batch);}
     for(const [pair,batch] of cutouts)drawSprite(batch,pair,2);
     for(const [pair,batch] of batches)drawSprite(batch,pair,3);
     if(softSprites&&batches.size){
@@ -258,8 +287,8 @@ export function createRenderer(canvas){
       gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
       const ordered=actors.filter(a=>!a.actor.hardAlpha).map(a=>({...a,depth:a.quad.reduce((s,p)=>s+p.depth,0)})).sort((a,b)=>a.depth-b.depth);
       let current=null,batch=[];
-      for(const {actor,quad} of ordered){
-        const pair=spritePair(actor);if(current!==pair){if(current)drawSprite(batch,current,4);batch=[];current=pair;}
+      for(const {actor,quad,pair} of ordered){
+        if(current!==pair){if(current)drawSprite(batch,current,4);batch=[];current=pair;}
         packSprite(batch,actor,quad);
       }
       if(current)drawSprite(batch,current,4);gl.depthMask(true);gl.disable(gl.BLEND);
@@ -281,7 +310,7 @@ export function createRenderer(canvas){
         gl.deleteTexture(record.tex);spriteTextures.delete(image);spriteBytes-=record.bytes;spriteEvictions++;
       }
     }
-
+    endTiming(query);
   }
-  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,diagnostics(){return {terrain_uploads:terrainUploads,terrain_cache_hit:terrainCacheHit,draw_calls:drawCalls,sprite_uploads:spriteUploads,sprite_evictions:spriteEvictions,sprite_textures:spriteTextures.size,active_sprite_textures:activeSpriteTextures,sprite_texture_bytes_estimate:spriteBytes};},readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
+  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,setTimingEnabled,takeTimingSamples(){const result=timingSamples;timingSamples=[];return result;},diagnostics(){return {gpu_timer_supported:!!timer,gpu_timer_discarded:timingDiscarded,gpu_timer_pending:timingPending.length,terrain_buffer_bytes:terrainBytes,terrain_uploads:terrainUploads,terrain_cache_hit:terrainCacheHit,draw_calls:drawCalls,sprite_uploads:spriteUploads,sprite_evictions:spriteEvictions,sprite_textures:spriteTextures.size,active_sprite_textures:activeSpriteTextures,sprite_texture_bytes_estimate:spriteBytes};},readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
 }

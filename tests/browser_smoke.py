@@ -205,6 +205,18 @@ with sync_playwright() as p:
     assert residency["initial"]["sprite_uploads"]==1
     assert residency["idle"]["sprite_textures"]==1 and residency["idle"]["active_sprite_textures"]==0
     assert residency["reused"]["sprite_uploads"]==0 and residency["changed"]["sprite_uploads"]==1
+    packed=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs'),c=document.createElement('canvas');c.width=c.height=32;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const faces=[{kind:'top',color:[0,1,0],points:[[1,1,1],[30,1,1],[1,30,1]]}];
+      r.render(faces,view,{pattern:false,projectionKey:'a'});const first=r.diagnostics(),pixel=r.readPixel(5,5);
+      r.render(faces,view,{pattern:false,projectionKey:'a'});const repeat=r.diagnostics(),same=r.readPixel(5,5);
+      r.render(faces,view,{pattern:false,projectionKey:'b'});const changed=r.diagnostics();
+      return {first,repeat,changed,pixel,same};
+    }""")
+    assert packed["first"]["terrain_uploads"]==1 and packed["first"]["terrain_buffer_bytes"]>0,packed
+    assert packed["repeat"]["terrain_uploads"]==0 and packed["repeat"]["terrain_cache_hit"],packed
+    assert packed["changed"]["terrain_uploads"]==1 and packed["pixel"]==packed["same"],packed
     alpha=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
       const c=document.createElement('canvas');c.width=c.height=64;
@@ -495,6 +507,19 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).performance.terrain_cache_hit===true",timeout=60000)
     page.wait_for_function("(()=>{const p=JSON.parse(document.querySelector('#status').textContent).performance;return p.terrain_cache_hit===true&&p.terrain_uploads===0&&p.terrain_ms<20})()",timeout=60000)
     print("MEADOW_PROFILE_SETTLED",page.evaluate("JSON.parse(document.querySelector('#status').textContent).performance"))
+    page.locator("summary",has_text="Performance capture").click()
+    page.locator("#startBenchmark").click()
+    page.wait_for_function("!document.querySelector('#exportBenchmark').disabled",timeout=60000)
+    with page.expect_download() as performance_report:
+        page.locator("#exportBenchmark").click()
+    capture=json.loads(Path(performance_report.value.path()).read_text())
+    assert capture["schema"]=="smi-hex-performance/1" and capture["scenario"]=="settled-idle"
+    assert capture["elapsed_ms"]>=10000 and capture["metrics"]["interval_samples"]>0
+    assert capture["start"]["camera"]==capture["end"]["camera"]
+    assert capture["start"]["geometry_revision"]==capture["end"]["geometry_revision"]
+    assert capture["start"]["world_mode"]=="exploration"
+    assert capture["metrics"]["gpu_ms"] is None or capture["metrics"]["gpu_samples"]>0
+    page.locator("summary",has_text="Performance capture").click()
     initial=page.evaluate("JSON.parse(document.querySelector('#status').textContent).resident_chunks")
     page.get_by_role("button",name="Half",exact=True).click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.shape.upper.every(v=>v===1)")
