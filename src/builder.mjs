@@ -2,7 +2,8 @@
 import {makeEditPlan,hexStroke,cellShape,cellMaterial,cellWater} from "./editor.mjs";
 import {uniformShape,hasVolume} from "./geometry.mjs";
 import {validAddress,validateEntity,anchorHeight,spriteBinding} from "./entities.mjs";
-import {stableUnit,surface,withSurface} from "./materials.mjs";
+import {stableUnit,surface,withSurface,weatherSurface} from "./materials.mjs";
+import {climateAt} from "./environment.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);},key=a=>a.join(",");
 export function entityOccupancy(world){
   const map=new Map();for(const e of world.entities()){const k=key(e.address),list=map.get(k)??[];list.push(e);map.set(k,list);}return map;
@@ -80,4 +81,35 @@ export function planPath(world,waypoints,{kind="road",radius=0,height=2,material
     return {address,value};
   });
   return makeEditPlan(world,edits,kind==="river"?"Build fixed river":"Build road");
+}
+
+// A reproducible pilot recipe composed from existing builders. The user reviews
+// a single ordinary edit plan, not a sequence of partially applied commands.
+export function planWoodlandClearing(world,anchor,{tree,chest=null}={}){
+  assert(validAddress(anchor),"Invalid clearing anchor");
+  const at=(q,r)=>[anchor[0]+q,anchor[1]+r,anchor[2]];
+  const road=planPath(world,[at(-1,-1),at(2,-1)],{kind:"road",material:"soil",height:2});
+  const creek=planPath(world,[at(-2,1),at(1,1)],{kind:"river",material:"stone",height:1,fill:.8,speed:2});
+  const grove=planGrove(world,[at(-2,0)],{bindings:[tree],density:1,seed:"woodland-acceptance"});
+  assert(!grove.skipped,"Clearing tree needs a free, dry supporting cell");
+  const entities=[...grove.plan.entities];
+  if(chest){
+    const placement=planObjectPlacement(world,[at(1,0)],{bindings:[chest],density:1,seed:"woodland-chest"});
+    assert(!placement.skipped,"Clearing chest needs a free, dry supporting cell");
+    entities.push(...placement.entities);
+  }
+  return makeEditPlan(world,[...road.edits,...creek.edits],"Woodland acceptance clearing",entities);
+}
+
+// Exposure is an explicit reviewed edit of user-designated surfaces. It does
+// not infer roof coverage, advance time, generate unknown cells or change water.
+export function planWeatherExposure(world,addresses,{seconds=600}={}){
+  assert(Number.isFinite(seconds)&&seconds>0&&seconds<=86400,"Invalid exposure duration");
+  const field=world.environment,n=world.config.grid.geometry_subdivisions;
+  const edits=addressesOf(addresses).map(address=>{
+    const cell=world.get(...address);
+    assert(cell&&hasVolume(cell.shape),"Weather exposure needs known solid terrain");
+    return {address,value:withSurface(cell,weatherSurface(cell,climateAt(field,address),seconds,n))};
+  });
+  return makeEditPlan(world,edits,"Apply authored weather exposure");
 }

@@ -1,6 +1,12 @@
 // The public catalog is discovery metadata; the actual archive is qualified at load.
 import {spriteBinding} from "./entities.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
+const browseFields=["category_path","perspective","theme","medium"];
+const tokens=value=>Array.isArray(value)?[...new Set(value.filter(v=>typeof v==="string"&&v.length>0&&v.length<=200))]:[];
+// Consume Atlas's projected discovery metadata, never infer a second taxonomy.
+export function catalogBrowseOptions(entries){
+  return Object.fromEntries([...browseFields,"family"].map(key=>[key,[...new Set(entries.flatMap(e=>key==="family"?(e.family?[e.family]:[]):e[key]??[]))].sort()]));
+}
 export const ATLAS_CATALOG="https://superior-mi-labs.github.io/Superior-MI-Icon-Atlas/public-catalog.json";
 export function resolveCatalog(index,reference){
   const base=new URL(reference);
@@ -17,7 +23,7 @@ export function resolveCatalog(index,reference){
     if(a.legacy||!packs.has(a.pack)||a.discovery==="hidden")continue;
     assert(typeof a.id==="string"&&!seen.has(a.id),"Duplicate catalog asset");seen.add(a.id);
     const binding=spriteBinding({...packs.get(a.pack),asset:a.id});
-    entries.push({id:a.id,name:String(a.name??a.id),domain:String(a.domain??""),kind:a.kind,license:String(a.license??""),discovery:a.discovery??"standalone",capabilities:Array.isArray(a.capabilities)?a.capabilities.filter(x=>typeof x==="string"):[],binding});
+    entries.push({id:a.id,pack:a.pack,visual_qa:a.visual_qa??"unknown",name:String(a.name??a.id),domain:String(a.domain??""),kind:a.kind,license:String(a.license??""),discovery:a.discovery??"standalone",capabilities:tokens(a.capabilities),...Object.fromEntries(browseFields.map(key=>[key,tokens(a[key])])),family:typeof a.family==="string"&&a.family.length<=200?a.family:"",binding});
   }
   return entries;
 }
@@ -29,7 +35,7 @@ export async function fetchCatalog(reference=ATLAS_CATALOG,fetcher=fetch){
   catch(e){await reader.cancel();throw e;}
   return resolveCatalog(JSON.parse(content),url.href);
 }
-export function searchCatalog(entries,query="",capability="",components=false){
+export function searchCatalog(entries,query="",capability="",components=false,domain="",browse={}){
   const terms=query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  return entries.filter(a=>(components||a.discovery==="standalone")&&(!capability||a.capabilities.includes(capability))&&terms.every(t=>[a.id,a.name,a.domain,...a.capabilities].join(" ").toLowerCase().includes(t))).slice(0,200);
+  return entries.filter(a=>(components||a.discovery==="standalone")&&(!domain||a.domain===domain)&&(!capability||a.capabilities.includes(capability))&&browseFields.every(k=>!browse[k]||(a[k]??[]).includes(browse[k]))&&(!browse.family||a.family===browse.family)&&terms.every(t=>[a.id,a.name,a.domain,a.family,...a.capabilities,...browseFields.flatMap(k=>a[k]??[])].join(" ").toLowerCase().includes(t))).slice(0,200);
 }

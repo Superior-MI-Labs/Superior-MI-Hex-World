@@ -30,7 +30,8 @@ export function spriteBinding(b){
   assert(b.walk_state===undefined||b.walk_state===null||id(b.walk_state),"Invalid walking state");
   assert(b.views===undefined||(Array.isArray(b.views)&&b.views.length===6&&b.views.every(id)),"Directional binding requires six Atlas asset IDs");
   assert(b.archive_sha256===undefined||typeof b.archive_sha256==="string"&&/^[a-f0-9]{64}$/.test(b.archive_sha256)&&url.pathname.toLowerCase().endsWith(".zip"),"Invalid archive digest");
-  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.archive_sha256?{archive_sha256:b.archive_sha256}:{}),...visualSelection(b),...(b.views!==undefined?{views:[...b.views]}:{}),...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
+  if(b.emissive_mask!==undefined)assert(id(b.emissive_mask)&&b.state==null&&!b.views&&!b.walk_state&&!b.wind?.states?.length,"Emissive mask requires a static nondirectional binding");
+  return {manifest:b.manifest,asset:b.asset,state:b.state??null,height_ft,...(b.emissive_mask!==undefined?{emissive_mask:b.emissive_mask}:{}),...(b.archive_sha256?{archive_sha256:b.archive_sha256}:{}),...visualSelection(b),...(b.views!==undefined?{views:[...b.views]}:{}),...(b.walk_state?{walk_state:b.walk_state}:{}),...(b.wind!==undefined?{wind:validateWindResponse(b.wind)}:{})};
 }
 // Physical geometry belongs to the host, independent of sprite dimensions.
 export function validateCollider(c){

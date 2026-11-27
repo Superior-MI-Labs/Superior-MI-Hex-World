@@ -22,3 +22,11 @@ test("broken view dependency is rejected, and declared wind states are adopted",
   const asset="smi.hex.grass.states.fixture",a=validateSpritePack(pack,asset).get(asset);
   assert.deepEqual(adoptSpatialProfile({...raw,asset},a).binding.wind.states,[{min_speed_ft_s:8,state:"wind"}]);
 });
+
+import {spriteBinding as maskBinding,visualKey as maskKey} from "../src/entities.mjs";
+test("emissive mask is an explicit static same-pack region reference in the visual identity",()=>{
+ const b={manifest:"https://example.org/pack.zip",archive_sha256:"a".repeat(64),asset:"lamp",emissive_mask:"lamp.mask"};
+ assert.equal(maskBinding(b).emissive_mask,"lamp.mask");
+ assert.notEqual(maskKey(b),maskKey({...b,emissive_mask:"other.mask"}));
+ for(const invalid of [{state:"lit"},{views:Array(6).fill("lamp")},{walk_state:"walk"},{wind:{states:[{min_speed_ft_s:5,state:"wind"}]}},{emissive_mask:{asset:"mask"}}])assert.throws(()=>maskBinding({...b,...invalid}),/Emissive mask/);
+});

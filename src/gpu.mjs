@@ -7,7 +7,7 @@ out vec3 v_color; out vec2 v_uv; out vec3 v_cover; out float v_rim; out vec2 v_m
 void main(){gl_Position=vec4(a_position,1.0);v_color=a_color;v_uv=a_uv;v_cover=a_cover;v_rim=a_rim;v_mask_uv=a_mask_uv;v_weights=a_weights;v_shade=a_shade;v_world=a_world;}`;
 const FS=`#version 300 es
 precision highp float;
-in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; in vec4 v_weights; in float v_shade; in vec3 v_world; uniform float u_water_time; uniform int u_light_count; uniform vec4 u_light_pos[${MAX_POINT_LIGHTS}]; uniform vec4 u_light_rgb[${MAX_POINT_LIGHTS}]; uniform sampler2D u_texture; uniform sampler2D u_layer1; uniform sampler2D u_layer2; uniform sampler2D u_layer3; uniform sampler2D u_mask; uniform int u_mode; uniform float u_detail_strength; uniform ivec4 u_color_modes; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
+in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; in vec4 v_weights; in float v_shade; in vec3 v_world; uniform float u_water_time; uniform int u_light_count; uniform vec4 u_light_pos[${MAX_POINT_LIGHTS}]; uniform vec4 u_light_rgb[${MAX_POINT_LIGHTS}]; uniform sampler2D u_texture; uniform sampler2D u_layer1; uniform sampler2D u_layer2; uniform sampler2D u_layer3; uniform sampler2D u_mask; uniform sampler2D u_emissive_mask; uniform int u_mode; uniform float u_detail_strength; uniform ivec4 u_color_modes; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
 float coverage(float amount,float noise){
@@ -29,7 +29,11 @@ vec3 localLight(){
   }
   return sum;
 }
-vec3 spriteLight(vec3 base){return base*(v_color+localLight());}
+vec3 spriteLight(vec3 base){
+  float emission=clamp(v_cover.x,0.0,1.0);
+  if(v_cover.y>0.5){vec4 mask=texture(u_emissive_mask,v_uv);emission*=mask.r*mask.a;}
+  return base*(mix(v_color,vec3(1.0),emission)+localLight());
+}
 void main(){
   vec4 t=texture(u_texture,v_uv);
   if(u_mode==2){if(t.a<0.5)discard;color=vec4(spriteLight(t.rgb),1.0);}
@@ -86,7 +90,7 @@ export function createRenderer(canvas){
   const waterTime=gl.getUniformLocation(program,"u_water_time");
   const mode=gl.getUniformLocation(program,"u_mode"),lightCount=gl.getUniformLocation(program,"u_light_count"),lightPos=gl.getUniformLocation(program,"u_light_pos[0]"),lightRGB=gl.getUniformLocation(program,"u_light_rgb[0]");
   const uniforms=Object.fromEntries(["u_detail_strength","u_color_modes","u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
-  gl.uniform1i(gl.getUniformLocation(program,"u_texture"),0);gl.uniform1i(gl.getUniformLocation(program,"u_mask"),1);
+  gl.uniform1i(gl.getUniformLocation(program,"u_texture"),0);gl.uniform1i(gl.getUniformLocation(program,"u_mask"),1);gl.uniform1i(gl.getUniformLocation(program,"u_emissive_mask"),5);
   const units=[0,2,3,4];for(let i=1;i<4;i++)gl.uniform1i(gl.getUniformLocation(program,"u_layer"+i),units[i]);
   function texture(){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);return t;}
   const ground=texture(),pixels=new Uint8Array(64*64*4);
@@ -97,7 +101,8 @@ export function createRenderer(canvas){
   }
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,64,64,0,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
-  for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}gl.activeTexture(gl.TEXTURE0);
+  for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}
+  gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
   const mask=texture();let maskEnabled=false;
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,mask);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([128,128,128,255]));
@@ -132,12 +137,13 @@ export function createRenderer(canvas){
   for(let y=0;y<64;y++)for(let x=0;x<64;x++){const d=Math.hypot((x+.5)/32-1,(y+.5)/32-1),a=Math.max(0,1-d*d);shadowPixels[(y*64+x)*4+3]=Math.round(255*a*a);}
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,64,64,0,gl.RGBA,gl.UNSIGNED_BYTE,shadowPixels);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  const spriteTextures=new Map();
+  const spriteTextures=new Map();let spriteUploads=0,spriteFrame=0,spriteBytes=0,activeSpriteTextures=0,spriteEvictions=0;
+  const spriteTextureBudget=64*1024*1024,spriteTextureCount=128;
   function spriteTexture(actor){
     let record=spriteTextures.get(actor.image);
-    if(!record){const tex=texture();gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);record={tex,revision:-1};spriteTextures.set(actor.image,record);}
-    if(record.revision!==actor.revision){gl.bindTexture(gl.TEXTURE_2D,record.tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,actor.image);record.revision=actor.revision;}
-    return record.tex;
+    if(!record){const tex=texture();gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);record={tex,revision:-1,bytes:0,lastUsed:0};spriteTextures.set(actor.image,record);}
+    if(record.revision!==actor.revision){gl.bindTexture(gl.TEXTURE_2D,record.tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,actor.image);spriteBytes-=record.bytes;record.bytes=actor.image.width*actor.image.height*4;spriteBytes+=record.bytes;spriteUploads++;record.revision=actor.revision;}
+    record.lastUsed=spriteFrame;return record.tex;
   }
   function draw(data,tex,m){if(!data.length)return;drawCalls++;gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);gl.drawArrays(gl.TRIANGLES,0,data.length/22);}
   function drawTerrain(batch,tex,m,cacheHit){
@@ -147,6 +153,8 @@ export function createRenderer(canvas){
     gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   }
   function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
+    // Keep the auxiliary sampler complete even when a previous masked sprite was evicted.
+    gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(waterTime,visualTime);
     const lights=pointLights.slice(0,MAX_POINT_LIGHTS);
@@ -157,7 +165,7 @@ export function createRenderer(canvas){
     gl.uniform1f(uniforms.u_mask_scale,transitions.mask_scale??8);gl.uniform1f(uniforms.u_softness,transitions.mask_softness??.13);gl.uniform1f(uniforms.u_bleed,transitions.cliff_bleed_ft??1.25);
     gl.uniform3fv(uniforms.u_leaf_color,transitions.leaf_color??[.65,.34,.12]);gl.uniform3fv(uniforms.u_snow_color,transitions.snow_color??[.91,.94,.97]);gl.uniform3fv(uniforms.u_scorch_color,transitions.scorch_color??[.15,.13,.11]);
     gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.depthMask(true);gl.disable(gl.BLEND);
-    terrainUploads=0;terrainCacheHit=false;drawCalls=0;
+    terrainUploads=0;terrainCacheHit=false;drawCalls=0;spriteUploads=0;spriteEvictions=0;spriteFrame++;
     const reusable=projectionKey!==null&&projectionCache?.key===projectionKey&&projectionCache.faces===faces;
     if(!reusable){const projected=faces.map(f=>({f,p:f.points.map(view)}));let low=Infinity,high=-Infinity;for(const f of projected)for(const p of f.p){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}projectionCache={key:projectionKey,faces,projected,low,high};}
     const projected=projectionCache.projected,actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
@@ -196,11 +204,22 @@ export function createRenderer(canvas){
       drawTerrain(batch,textures[0]??ground,pattern?1:0,cacheHit);
     }
     if(shadows.length&&!debug){const data=[];for(const f of shadows){const p=f.points.map(view);for(let i=0;i<3;i++)pack(data,p[i],[f.opacity,0,0],f.uv[i]);}gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,shadowTexture,5);gl.depthMask(true);gl.disable(gl.BLEND);}
-    const tint=a=>spriteTint.map(v=>v+(1-v)*(a.emissive??0));
     const batches=new Map(),cutouts=new Map(),used=new Set(),uv=[[0,0],[1,0],[1,1],[0,1]];
-    for(const {actor,quad} of actors){used.add(actor.image);const tex=spriteTexture(actor),target=softSprites&&!actor.hardAlpha?batches:cutouts,batch=target.get(tex)??[];for(const i of [0,1,2,0,2,3])pack(batch,quad[i],tint(actor),uv[i],undefined,undefined,undefined,undefined,1,actor.points[i]);target.set(tex,batch);}
-    for(const [tex,batch] of cutouts)draw(batch,tex,2);
-    for(const [tex,batch] of batches)draw(batch,tex,3);
+    const texturePairs=new Map();
+    function spritePair(actor){
+      used.add(actor.image);const tex=spriteTexture(actor);
+      let mask=null;if(actor.emissiveMask){used.add(actor.emissiveMask);mask=spriteTexture({image:actor.emissiveMask,revision:0});}
+      if(!texturePairs.has(tex))texturePairs.set(tex,new Map());const pairs=texturePairs.get(tex);
+      if(!pairs.has(mask))pairs.set(mask,{tex,mask});return pairs.get(mask);
+    }
+    function packSprite(batch,actor,quad){for(const i of [0,1,2,0,2,3])pack(batch,quad[i],spriteTint,uv[i],[actor.emissive??0,actor.emissiveMask?1:0,0],undefined,undefined,undefined,1,actor.points[i]);}
+    function drawSprite(batch,pair,m){
+      gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,pair.mask??ground);gl.activeTexture(gl.TEXTURE0);
+      draw(batch,pair.tex,m);
+    }
+    for(const {actor,quad} of actors){const pair=spritePair(actor),target=softSprites&&!actor.hardAlpha?batches:cutouts,batch=target.get(pair)??[];packSprite(batch,actor,quad);target.set(pair,batch);}
+    for(const [pair,batch] of cutouts)drawSprite(batch,pair,2);
+    for(const [pair,batch] of batches)drawSprite(batch,pair,3);
     if(softSprites&&batches.size){
       // Opaque sprite cores write depth. Translucent fringes retain terrain
       // depth testing and blend back-to-front, without writing depth.
@@ -208,10 +227,10 @@ export function createRenderer(canvas){
       const ordered=actors.filter(a=>!a.actor.hardAlpha).map(a=>({...a,depth:a.quad.reduce((s,p)=>s+p.depth,0)})).sort((a,b)=>a.depth-b.depth);
       let current=null,batch=[];
       for(const {actor,quad} of ordered){
-        const tex=spriteTexture(actor);if(current!==tex){if(current)draw(batch,current,4);batch=[];current=tex;}
-        for(const i of [0,1,2,0,2,3])pack(batch,quad[i],tint(actor),uv[i],undefined,undefined,undefined,undefined,1,actor.points[i]);
+        const pair=spritePair(actor);if(current!==pair){if(current)drawSprite(batch,current,4);batch=[];current=pair;}
+        packSprite(batch,actor,quad);
       }
-      if(current)draw(batch,current,4);gl.depthMask(true);gl.disable(gl.BLEND);
+      if(current)drawSprite(batch,current,4);gl.depthMask(true);gl.disable(gl.BLEND);
     }
     if(waterProjected.length&&!debug){
       const data=[],shade=light?light.ambient+(1-light.ambient)*Math.max(0,light.direction[2]/lightLength):1;
@@ -220,8 +239,17 @@ export function createRenderer(canvas){
       gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,ground,6);gl.depthMask(true);gl.disable(gl.BLEND);
     }
     if(walls.length){const data=[];for(const {f,p} of walls)for(let i=0;i<3;i++)pack(data,p[i],[1,1,1],[0,f.fade[i]]);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,ground,7);gl.depthMask(true);gl.disable(gl.BLEND);}
-    for(const [image,record] of spriteTextures)if(!used.has(image)){gl.deleteTexture(record.tex);spriteTextures.delete(image);}
+    activeSpriteTextures=used.size;
+    // Retain recently used idle textures across pans/season changes, bounded
+    // by count and estimated RGBA bytes. Active resources are never evicted.
+    if(spriteBytes>spriteTextureBudget||spriteTextures.size>spriteTextureCount){
+      const idle=[...spriteTextures].filter(([image])=>!used.has(image)).sort((a,b)=>a[1].lastUsed-b[1].lastUsed);
+      for(const [image,record] of idle){
+        if(spriteBytes<=spriteTextureBudget&&spriteTextures.size<=spriteTextureCount)break;
+        gl.deleteTexture(record.tex);spriteTextures.delete(image);spriteBytes-=record.bytes;spriteEvictions++;
+      }
+    }
 
   }
-  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,diagnostics(){return {terrain_uploads:terrainUploads,terrain_cache_hit:terrainCacheHit,draw_calls:drawCalls};},readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
+  return Object.freeze({render,setTransitionMask,setTerrainDetail,setTerrainStyle,diagnostics(){return {terrain_uploads:terrainUploads,terrain_cache_hit:terrainCacheHit,draw_calls:drawCalls,sprite_uploads:spriteUploads,sprite_evictions:spriteEvictions,sprite_textures:spriteTextures.size,active_sprite_textures:activeSpriteTextures,sprite_texture_bytes_estimate:spriteBytes};},readPixel(x,y){const p=new Uint8Array(4);gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return [...p];}});
 }

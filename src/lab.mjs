@@ -4,13 +4,13 @@ import {planVertexEdit,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
 import {buildWaterSurfaces,stepWater,waterTicks} from "./water.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,selectionBrush,mergeSelection,CellEditHistory,makeEditPlan,inspectEditPlan,applyEditPlan,cellShape,cellMaterial,cellWater,hexStroke,exportBuildContext} from "./editor.mjs";
-import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath} from "./builder.mjs";
+import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing,planWeatherExposure} from "./builder.mjs";
 import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
-import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
-import {ATLAS_CATALOG,fetchCatalog,searchCatalog} from "./catalog.mjs";
+import {createAtlasSprite,createAtlasMask,resolveAtlasBinding,AnimationPhasePool} from "./assets.mjs";
+import {ATLAS_CATALOG,fetchCatalog,searchCatalog,catalogBrowseOptions} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
-import {fetchStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
+import {fetchStyle,loadStyle,validateStyle,validateStyleVariants,woodlandPreviewStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
 import {EXPLORATION_PROFILE,explorationConfig,viewportBounds,loadViewport} from "./region.mjs";
 import {placeObject,anchorHeight,visualKey,spriteBinding,directionalBinding,visualSelection,colliderActive,validateCollider} from "./entities.mjs";
 import {validateMovement,planObjectMove,moveObject,interactObject,routeWaypoints,sampleRoute,routeGeometryStamp} from "./navigation.mjs";
@@ -19,10 +19,10 @@ import {SETTLEMENT,settlementGround,settlementDomain,settlementStart,buildSettle
 import {contactShadows,terrainOcclusion,directionalShadows,collectPointLights,selectPointLights} from "./lighting.mjs";
 import {objectVolumes} from "./collision.mjs";
 import {buildScatterPlan,promoteSample} from "./scatter.mjs";
-import {CALM,validateWater,DEFAULT_LIGHTING,validateLighting,validateLightSource,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend} from "./environment.mjs";
+import {CALM,validateWater,DEFAULT_LIGHTING,validateLighting,validateLightSource,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend,precipitationPlan,precipitationParticle} from "./environment.mjs";
 import {validateInteractions,interactionTags,cellTarget,entityTarget,contactResponse,bendBillboard} from "./interactions.mjs";
 import {validatePrefab,planPrefab,capturePrefab} from "./prefabs.mjs";
-import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
+import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit,surfaceSubmerged} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
 const base=await fetch("./examples/world.json").then(r=>{if(!r.ok)throw Error("World unavailable");return r.json()});
@@ -37,7 +37,7 @@ const island=Array.from({length:5},(_,i)=>i-2).flatMap(q=>Array.from({length:5},
 const islandDomain=island.flatMap(([q,r])=>[-2,-1,0,1,2].map(z=>[q,r,z]));
 let ground=island,domain=islandDomain,worldMode="island",regionKey="",cameraKey="",activeChunks=0;
 let regionBounds=null,wireCells=new Map(),history=null,stagedPlan=null,gesture=null,waypoints=[];
-let renderYaw=0,turn=null,selection=[[0,0,0]],keys=new Set(),visibleCache=null,grassCache=new WeakMap(),shadowCache=null;
+let renderYaw=0,turn=null,selection=[[0,0,0]],keys=new Set(),visibleCache=null,grassCache=new WeakMap(),shadowCache=null,weatherCache=null;
 function camera(){return {yaw:renderYaw,alignment_deg:Number($("cameraAlignment").value),scale,width:canvas.width,height:canvas.height,panX,panY};}
 function refreshRegion(force=false){
   if(worldMode!=="exploration")return;
@@ -53,13 +53,36 @@ let capture=new Map(),captureAnchor=null;
 const prefabSelect=$("prefab");for(const p of prefabCatalog)prefabSelect.add(new Option(p.name,p.id));
 const demoVisual={manifest:"./examples/atlas-character/manifest.json",asset:"smi.example.robot.states",state:"idle",height_ft:4,walk_state:"walk"};
 let actor=null,spriteRequest=0,art=null,activeBinding=demoVisual;
-const palette=new Map();
+const palette=new Map();let paletteRequest=0;
 function refreshPalette(){const host=$("assetPalette");host.replaceChildren();for(const [key,v] of palette){const b=document.createElement("button"),thumb=document.createElement("canvas");b.type="button";b.title=v.binding.asset;thumb.width=48;thumb.height=48;thumb.style.cssText="width:48px;height:48px;vertical-align:middle;border:0";const w=v.image.width,h=v.image.height,s=Math.min(48/w,48/h);thumb.getContext("2d").drawImage(v.image,(48-w*s)/2,(48-h*s)/2,w*s,h*s);b.append(thumb,document.createTextNode(" "+v.binding.asset));b.onclick=()=>loadBinding(v.binding);host.append(b);}}
-$("pinAsset").onclick=()=>{if(!actor)return;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
-$("clearPalette").onclick=()=>{palette.clear();refreshPalette();$("paletteStatus").textContent="Palette cleared";};
-const spriteCache=new Map();
-function requestSprite(binding){
+$("pinAsset").onclick=()=>{if(!actor)return;paletteRequest++;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
+$("clearPalette").onclick=()=>{paletteRequest++;palette.clear();refreshPalette();$("paletteStatus").textContent="Palette cleared";};
+$("exportPalette").onclick=()=>downloadJSON([...palette.values()].map(v=>v.binding),"hex-asset-palette.json");
+$("importPalette").onchange=async()=>{
+  const file=$("importPalette").files[0];$("importPalette").value="";if(!file)return;
+  const request=++paletteRequest;
+  try{
+    if(file.size>512000)throw Error("Palette exceeds 512 KB");
+    const raw=JSON.parse(await file.text());
+    if(!Array.isArray(raw)||raw.length>24)throw Error("Palette must contain up to 24 sprite bindings");
+    const next=new Map();
+    for(const source of raw){
+      // Keep saved pins/height/state intact; re-qualify actual rasters before commit.
+      const {binding,next:raster}=await qualifyBinding(spriteBinding(source));
+      if(request!==paletteRequest)return;
+      const key=visualKey(binding);if(next.has(key))throw Error("Duplicate palette binding");
+      next.set(key,{binding,image:raster.image});
+    }
+    if(request!==paletteRequest)return;
+    palette.clear();for(const [key,value] of next)palette.set(key,value);
+    refreshPalette();$("paletteStatus").textContent=palette.size+" imported assets";
+  }catch(e){if(request===paletteRequest)$("paletteStatus").textContent="Previous palette retained: "+e.message;}
+};
+const spriteCache=new Map(),phasePool=new AnimationPhasePool();let phaseFailures=new WeakSet();
+function clearAnimationPhases(){phasePool.clear();phaseFailures=new WeakSet();}
+function requestSprite(binding,retry=false){
   const key=visualKey(binding)+(binding.requireState?":strict-state":"");
+  if(retry&&spriteCache.get(key)?.error)spriteCache.delete(key);
   if(!spriteCache.has(key)){
     const entry={sprite:null,error:null};
     entry.promise=createAtlasSprite(binding).then(async s=>{await s.update(0);entry.sprite=s;return s;}).catch(e=>{entry.error=e.message;return null;});
@@ -237,6 +260,14 @@ $("applyCollider").onclick=async()=>{
 $("rotateObject").onclick=()=>{const e=world.getEntity($("objects").value);if(e){commitObjects([{id:e.id,value:{...e,orientation_steps:((e.orientation_steps??0)+1)%6}}],"Rotate object");}};
 $("removeObject").onclick=()=>{const id=$("objects").value;if(world.getEntity(id))commitObjects([{id,value:null}],"Remove object");};
 
+// Small host-generated weather textures share the existing GPU sprite path.
+// They are not published Atlas assets or persistent effects.
+const weatherTextures=new Map(["rain","snow","hail"].map(kind=>{
+  const c=document.createElement("canvas");c.width=8;c.height=kind==="rain"?32:8;const g=c.getContext("2d");
+  g.fillStyle=kind==="rain"?"#b6d8ed":"#f1f6ff";
+  if(kind==="rain")g.fillRect(2,1,4,30);else{g.beginPath();g.arc(4,4,3,0,Math.PI*2);g.fill();}
+  return [kind,c];
+}));
 // Temporary transparent vertical artwork, not an Atlas release.
 const tufts=new Map(catalog.vegetation.variants.map(v=>{
   const c=document.createElement("canvas");c.width=c.height=64;const g=c.getContext("2d");
@@ -248,16 +279,16 @@ async function qualifyBinding(raw){
   const unique=new Map(views.map(v=>[v.asset,v]));
   for(const v of unique.values()){
     const states=[...new Set([v.walk_state,...(v.wind?.states??[]).map(w=>w.state)].filter(Boolean))];
-    const base=requestSprite({...v,...(binding.views&&v.state!==null?{requireState:true}:{})});
+    const base=requestSprite({...v,...(binding.views&&v.state!==null?{requireState:true}:{})},true);
     if(!await base.promise)throw Error(base.error);
-    for(const state of states){const alternate=requestSprite({...v,state,requireState:true});if(!await alternate.promise)throw Error(alternate.error);}
+    for(const state of states){const alternate=requestSprite({...v,state,requireState:true},true);if(!await alternate.promise)throw Error(alternate.error);}
   }
-  const next=await requestSprite(views[0]).promise;if(!next)throw Error("Sprite unavailable");
+  const next=await requestSprite(views[0],true).promise;if(!next)throw Error("Sprite unavailable");
   return {binding,next};
 }
 async function loadBinding(raw){
   const request=++spriteRequest;$("assetStatus").textContent="Loading sprite";
-  try{const resolved=await resolveAtlasBinding(raw),{binding,next}=await qualifyBinding(resolved.binding);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";$("spatialStatus").textContent=resolved.warnings.join("; ")||("Height "+binding.height_ft+" ft · "+(binding.views?"6 views":"billboard")+(binding.wind?" · wind-responsive":""));}
+  try{const resolved=await resolveAtlasBinding(raw),{binding,next}=await qualifyBinding(resolved.binding);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("assetStatus").textContent="Atlas sprite loaded";$("spatialStatus").textContent=resolved.warnings.join("; ")||("Height "+binding.height_ft+" ft · "+(binding.views?"6 views":"billboard")+(binding.wind?" · wind-responsive":"")+(next.emissiveMask?" · emissive mask":""));}
   catch(e){if(request===spriteRequest){actor=null;$("assetStatus").textContent=e.message;$("spatialStatus").textContent="";}}
 }
 let appearanceRequest=0,appearanceKey=null,inspectRequest=0;
@@ -294,19 +325,26 @@ function drawAppearanceControls(contract,selection){
 }
 $("inspectAppearance").onclick=()=>inspectAppearance();
 let catalogEntries=[],catalogMatches=[],catalogRequest=0;
+const browseMenus={category_path:"catalogCategory",perspective:"catalogPerspective",theme:"catalogTheme",medium:"catalogMedium",family:"catalogFamily"};
 function refreshCatalog(){
-  catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked);
-  const menu=$("catalogAssets");menu.replaceChildren(...catalogMatches.map((a,i)=>new Option(a.name+" · "+a.domain+" · "+a.license,String(i))));
+  const browse=Object.fromEntries(Object.entries(browseMenus).map(([k,id])=>[k,$(id).value]));
+  catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked,$("catalogDomain").value,browse);
+  const menu=$("catalogAssets"),previous=menu.value;menu.replaceChildren(...catalogMatches.map(a=>new Option(a.name+" · "+a.domain+(a.family?" · "+a.family:"")+" · "+a.license+" · art review: "+a.visual_qa,a.id)));
+  if(catalogMatches.some(a=>a.id===previous))menu.value=previous;
   $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=!catalogMatches.length;
 }
 $("refreshCatalog").onclick=async()=>{
   const request=++catalogRequest;$("catalogStatus").textContent="Loading Atlas catalog";
   try{const entries=await fetchCatalog($("catalogURL").value);if(request!==catalogRequest)return;catalogEntries=entries;
-    const menu=$("catalogCapability");menu.replaceChildren(new Option("All capabilities",""),...[...new Set(entries.flatMap(a=>a.capabilities))].sort().map(k=>new Option(k,k)));refreshCatalog();
+    const domain=$("catalogDomain"),domains=[...new Set(entries.map(a=>a.domain).filter(Boolean))].sort();domain.replaceChildren(new Option("All domains",""),...domains.map(k=>new Option(k,k)));domain.value=domains.includes("world-environment")?"world-environment":"";
+    const menu=$("catalogCapability");menu.replaceChildren(new Option("All capabilities",""),...[...new Set(entries.flatMap(a=>a.capabilities))].sort().map(k=>new Option(k,k)));
+    const options=catalogBrowseOptions(entries);
+    for(const [key,id] of Object.entries(browseMenus)){const select=$(id),previous=select.value,values=options[key];select.replaceChildren(new Option("All",""),...values.map(v=>new Option(v,v)));select.value=values.includes(previous)?previous:"";select.disabled=!values.length;}
+    refreshCatalog();
   }catch(e){if(request===catalogRequest)$("catalogStatus").textContent=e.message;}
 };
-for(const k of ["catalogSearch","catalogCapability","catalogComponents"])$(k).oninput=refreshCatalog;
-$("loadCatalogAsset").onclick=()=>{const a=catalogMatches[Number($("catalogAssets").value)];if(a){const {height_ft,...source}=a.binding;loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);}};
+for(const k of ["catalogSearch","catalogCapability","catalogComponents","catalogDomain",...Object.values(browseMenus)])$(k).oninput=refreshCatalog;
+$("loadCatalogAsset").onclick=()=>{const a=catalogMatches.find(e=>e.id===$("catalogAssets").value);if(a){const {height_ft,...source}=a.binding;loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);}};
 
 $("applyAppearance").onclick=async()=>{
   const id=$("objects").value,e=world.getEntity(id),request=++appearanceRequest,owner=world;if(!e)return;
@@ -347,7 +385,7 @@ function selectFace(key){faceSelect.value=key;sync();}
 
 const get=()=>world.get(...selected).shape;
 function reset(){
-  stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;
+  clearAnimationPhases();stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;
   const n=base.grid.geometry_subdivisions;grid={...base.grid};
   world=worldMode==="settlement"?buildSettlement(base,prefabCatalog,demoVisual):new World(worldMode==="exploration"?explorationConfig(base):base);
   history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);playback.clear();showEvents([]);selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";
@@ -386,27 +424,43 @@ $("applyWater").onclick=()=>updateWater();$("drainWater").onclick=()=>updateWate
 function modifySurface(fn){editSelected(cell=>hasVolume(cell.shape)?withSurface(cell,fn(surface(cell.components?.surface),cell)):cell);}
 for(const k of ["growth","health","moisture","leaves","snow","scorch"]){$(k).oninput=()=>modifySurface(s=>({...s,[k]:Number($(k).value)}));bindGesture($(k));}
 $("material").onchange=()=>{const material=$("material").value;editSelected(cell=>cellMaterial(cell,material,catalog.materials[material].vegetation),"Material edit");};
-$("reactive").onclick=()=>modifySurface((s,c)=>ignite(catalog,c));
+$("reactive").onclick=()=>modifySurface((s,c)=>ignite(catalog,c,grid.geometry_subdivisions));
 $("extinguish").onclick=()=>{const c=world.get(...selected);if(hasVolume(c.shape))modifySurface(s=>({...s,burn:0}));for(const e of world.effects())if(e.address.every((v,i)=>v===selected[i]))world.removeEffect(e.id);};
 function simulate(seconds){if(seconds<=0)return;let waterChanged=false;
   if(world.environment.water_simulation)try{for(let i=0,n=waterTicks(clock.simulation-seconds,clock.simulation);i<n;i++){const result=stepWater(world);waterChanged||=result.edits.length>0;const {edits,...report}=result;waterReport=report;$("waterSimStatus").textContent=report.unsupported?report.unsupported+" unsupported wet cells held static":"Water transferred: "+report.moved_ft3.toFixed(3)+" ft³";}}catch(e){world.setEnvironment({...world.environment,water_simulation:false});$("simulateWater").checked=false;$("waterSimStatus").textContent=e.message+"; simulation disabled";}
-  const edits=[];for(const address of world.burningAddresses()){const c=world.get(...address),s=c.components?.surface;if(s?.burn>0)edits.push({address,value:withSurface(c,advanceSurface(s,seconds,catalog.vegetation.burn_seconds))});}if(edits.length)world.apply(edits);if(edits.length||waterChanged){dirty=true;sync();}}
+  const edits=[];for(const address of world.burningAddresses()){const c=world.get(...address),s=c.components?.surface;if(s?.burn>0)edits.push({address,value:withSurface(c,surfaceSubmerged(c,grid.geometry_subdivisions)?{...s,burn:0}:advanceSurface(s,seconds,catalog.vegetation.burn_seconds))});}if(edits.length)world.apply(edits);if(edits.length||waterChanged){dirty=true;sync();}}
 
 reset();
 $("level").onchange=()=>{const z=Number($("level").value);if(!displayedAddress([0,0,z])){$("cutaway").value="all";dirty=true;}selected=[selected[0],selected[1],z];selection=[[...selected]];sync();};
 loadActor();
 let artRequest=0;
 const fixtureStyle="./examples/meadow-style.json";
-async function loadArt(reference){
+async function loadArt(reference,prepare=()=>fetchStyle(reference,catalog)){
   const request=++artRequest;$("artStatus").textContent="Loading art profile";
-  try{const next=await fetchStyle(reference,catalog);
+  try{const next=await prepare();
     if(request!==artRequest)return;
-    gpu.setTerrainStyle(next);art=next;scatterDirty=true;syncLighting();
+    gpu.setTerrainStyle(next);clearAnimationPhases();art=next;scatterDirty=true;syncLighting();
     $("artStatus").textContent=next.profile.id==="fantasy-meadow-fixture"?"Atlas meadow fixture loaded":"Atlas art loaded: "+next.profile.id;
     $("scatterStatus").textContent=next.scatter.size+" decorative families"+(next.scatterWarnings.length?"; "+next.scatterWarnings.join("; "):"");
   }catch(e){if(request===artRequest)$("artStatus").textContent=(art?"Previous style retained: ":"Procedural fallback: ")+e.message;}
 }
 $("loadArt").onclick=()=>loadArt($("artURL").value.trim());
+$("loadWoodlandPreview").onclick=()=>loadArt(null,async()=>{
+  const url=new URL(fixtureStyle,location.href),response=await fetch(url);
+  if(!response.ok)throw Error("Fixture ground style unavailable");
+  const [fixture,entries]=await Promise.all([response.json(),fetchCatalog(ATLAS_CATALOG)]);
+  return loadStyle(validateStyleVariants(woodlandPreviewStyle(fixture,entries,url.href),catalog));
+});
+$("exportArt").onclick=()=>{if(art)downloadJSON(art.profile,"hex-art-style.json");};
+$("importArt").onchange=()=>{
+  const file=$("importArt").files[0];$("importArt").value="";
+  if(!file)return;
+  loadArt(null,async()=>{
+    if(file.size>1e6)throw Error("Style exceeds size limit");
+    const profile=validateStyleVariants(validateStyle(JSON.parse(await file.text())),catalog);
+    return loadStyle(profile);
+  });
+};
 $("resetArt").onclick=()=>{$("artURL").value=fixtureStyle;loadArt(fixtureStyle);};
 $("promoteScatter").onclick=()=>{try{if(dirty||scatterDirty)throw Error("Wait for terrain refresh");const sample=scatterChoices.find(s=>s.key===$("scatterChoice").value&&s.address.every((v,i)=>v===selected[i]));if(!sample||!art)throw Error("Select a decorative sample");promoteSample(world,art,sample,crypto.randomUUID());dirty=true;sync();$("message").textContent="Decoration promoted to persistent object";}catch(e){$("message").textContent=e.message;}};
 loadArt(fixtureStyle);
@@ -436,7 +490,7 @@ $("load").onchange=async()=>{try{
   const next=World.restore(JSON.parse(await file.text())),g=next.config.grid,cfg=next.config,generated=cfg.generation?.profile===EXPLORATION_PROFILE,settlement=cfg.scene===SETTLEMENT;
   if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||g.chunk_size.some((n,i)=>n!==base.grid.chunk_size[i])||(!generated&&(cfg.generation||!((settlement?settlementDomain:islandDomain).every(a=>next.get(...a))))))throw Error("Unsupported laboratory world profile");
   if(generated){if(typeof cfg.generation.seed!=="string"||!cfg.generation.seed)throw Error("Invalid generation seed");loadViewport(next,viewportBounds({yaw:0,scale:24,width:canvas.width,height:canvas.height,panX:0,panY:50},g,undefined,120));}
-  world=next;stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
+  world=next;clearAnimationPhases();stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
   yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;$("worldMode").value=worldMode;
   if(generated)refreshRegion(true);else{ground=settlement?settlementGround:island;domain=settlement?settlementDomain:islandDomain;activeChunks=0;}
   syncWind();syncClimate();syncLighting();syncWaterMode();sync();$("message").textContent="World imported";
@@ -516,12 +570,36 @@ function procedure(fn){try{fn();}catch(e){planRequest++;stagedPlan=null;$("apply
 $("addWaypoint").onclick=()=>{if(waypoints.length>=32){$("pathStatus").textContent="32 waypoint limit";return;}waypoints.push([...selected]);$("pathStatus").textContent=waypoints.map(a=>a.join(",")).join(" → ");};
 $("clearWaypoints").onclick=()=>{waypoints=[];$("pathStatus").textContent="No waypoints";};
 $("previewGrade").onclick=()=>procedure(()=>stageBuilder(planGrade(world,selection,builderSettings())));
+$("previewExposure").onclick=()=>procedure(()=>stageBuilder(planWeatherExposure(world,selection,{seconds:Number($("exposureSeconds").value)}),"; selected surfaces only; no clock advance"));
 $("previewPath").onclick=()=>procedure(()=>{
   const kind=$("pathKind").value,plan=planPath(world,waypoints,{...builderSettings(),kind,radius:Number($("pathRadius").value),fill:Number($("paintWater").value),speed:Number($("riverSpeed").value)});
   if(plan.edits.some(e=>!displayedAddress(e.address)))throw Error("Path crosses hidden cells");
   stageBuilder(plan);
 });
 $("previewGrove").onclick=()=>procedure(()=>{const {plan,skipped}=planGrove(world,selection,{bindings:builderBindings(),seed:$("builderSeed").value,density:Number($("objectDensity").value)});stageBuilder(plan,"; "+skipped+" skipped");});
+$("previewWoodland").onclick=async()=>{
+  const owner=world,anchor=[...selected],request=++planRequest;
+  stagedPlan=null;$("applyEditPlan").disabled=true;$("planStatus").textContent="Resolving woodland preview assets";
+  try{
+    const entries=await fetchCatalog(ATLAS_CATALOG);
+    async function resolve(id){
+      const entry=entries.find(e=>e.id===id);
+      if(!entry?.binding.archive_sha256||entry.license!=="CC0-1.0")throw Error("Missing approved preview asset: "+id);
+      const {height_ft,...source}=entry.binding;
+      return (await resolveAtlasBinding(source)).binding;
+    }
+    const [tree,chest]=await Promise.all([
+      resolve("smi.world.fantasy.recovered.trees-20261125.painted-broadleaf-tree"),
+      resolve("smi.world.fantasy.recovered.chests-20261125.weathered-wood-chest")
+    ]);
+    if(owner!==world||request!==planRequest)return;
+    const plan=planWoodlandClearing(world,anchor,{tree,chest});
+    if([...plan.edits.map(e=>e.address),...plan.entities.map(e=>e.value.address)].some(a=>!domain.some(b=>a.every((v,i)=>v===b[i]))||!displayedAddress(a)))throw Error("Clearing crosses the active editor region");
+    await qualifyObjects(plan.entities);
+    if(owner!==world||request!==planRequest)return;
+    stageBuilder(plan,"; static chest preview; apply separately");
+  }catch(e){if(owner===world&&request===planRequest)procedure(()=>{throw e;});}
+};
 $("exportStagedPlan").onclick=()=>{if(stagedPlan)downloadJSON(stagedPlan.plan,"hex-proposed-plan.json");else $("planStatus").textContent="Preview a plan first";};
 $("importEditPlan").onchange=async()=>{const owner=world,request=++planRequest;$("applyEditPlan").disabled=true;stagedPlan=null;try{const f=$("importEditPlan").files[0];if(!f)return;if(f.size>2e6)throw Error("Plan exceeds 2 MB");const raw=JSON.parse(await f.text());if(owner!==world||request!==planRequest)return;const checked=inspectEditPlan(world,raw);await qualifyObjects(checked.plan.entities??[]);if(owner!==world||request!==planRequest)return;stageBuilder(raw);}catch(e){if(owner===world&&request===planRequest){stagedPlan=null;$("applyEditPlan").disabled=true;$("planStatus").textContent=e.message;}}finally{if(owner===world)$("importEditPlan").value="";}};
 $("applyEditPlan").onclick=()=>{try{if(!stagedPlan)return;if(applyEditPlan(world,history,stagedPlan.plan)){dirty||=stagedPlan.plan.edits.length>0;for(const e of stagedPlan.plan.entities??[])playback.delete(e.id);}stagedPlan=null;$("applyEditPlan").disabled=true;sync();$("planStatus").textContent="Plan applied";}catch(e){$("planStatus").textContent=e.message;}};
@@ -532,7 +610,7 @@ window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(k==="escape
 window.addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
 window.addEventListener("blur",()=>keys.clear());
 document.addEventListener("focusin",e=>{if(editableTarget(e.target))keys.clear();});
-let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSum={},profileSamples=0;
+let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSum={},profileSamples=0,profileIntervals=[];
 
 function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,interval/1000);last=ms;const started=performance.now(),motion=cameraKeys(keys,dt,scale);panX+=motion.dx;panY+=motion.dy;if(motion.scale!==scale){scale=motion.scale;$("zoom").value=scale;}if(turn){const t=sampleTurn(turn,ms);renderYaw=t.done?yaw:t.yaw;if(t.done)turn=null;}clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);const terrainStart=performance.now();refreshRegion();ctx.clearRect(0,0,900,450);
   if(dirty){visibleCache=null;grassCache=new WeakMap();shadowCache=null;wireCells=new Map();scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});if($("ambientOcclusion").checked)faces=terrainOcclusion(world,faces);waterSurfaces=buildWaterSurfaces(renderWorld,level===null?domain:domain.filter(displayedAddress),{sides:true});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
@@ -551,7 +629,13 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     if(Math.hypot(...offset)>1e-8)windBent++;
     return composeBend(points,contact,offset,height);
   }
-  function animateRaster(r){if(r.animated&&!updated.has(r)){updated.add(r);r.update(clock.visual*1000).catch(e=>{$("artStatus").textContent="Animation error: "+e.message;});}}
+  function animateRaster(base,identity,onError=e=>{$("artStatus").textContent="Animation error: "+e.message;}){
+    if(!base.animated)return base;
+    const phase=$("independentPhases").checked&&base.phasePeriod?phasePool.select(base,stableUnit(seed,identity,"animation-phase")):{raster:base,offset:0};
+    const update=(r,offset)=>{if(!updated.has(r)&&!phaseFailures.has(r)){updated.add(r);r.update(clock.visual*1000+offset).catch(e=>{if(r===base)onError(e);else phaseFailures.add(r);});}};
+    if(phase.raster!==base&&!phaseFailures.has(phase.raster)){update(phase.raster,phase.offset);if(phase.raster.revision>0)return phase.raster;}
+    update(base,0);return base;
+  }
 
   function cellContact(address){const k=address.join(",");if(!contactByCell.has(k))contactByCell.set(k,contactResponse(interactions,cellTarget(address,world.get(...address))));return contactByCell.get(k);}
 
@@ -570,9 +654,9 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   if(styled&&$("scatter").checked)for(const sample of scatterPlan){
     if(scale<=sample.lod_px||!displayedAddress(sample.address))continue;
     const wind=windFor(sample.address),season=climateFor(sample.address).season,k=JSON.stringify([sample.family,sample.variant,sample.orientation,season,wind.velocity_ft_s]);if(!scatterVisualCache.has(k))scatterVisualCache.set(k,scatterRaster(art,{...sample,scale:1},wind,season,yaw));const v=scatterVisualCache.get(k);if(!v)continue;
-    const {r}=v,height=v.height*sample.scale,p=sample.point,w=height*r.pixelWidth/r.pixelHeight,screen=view(p),margin=scale*Math.max(w,height)*2;
+    const height=v.height*sample.scale,p=sample.point,w=height*v.r.pixelWidth/v.r.pixelHeight,screen=view(p),margin=scale*Math.max(w,height)*2;
     if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
-    animateRaster(r);
+    const r=animateRaster(v.r,[sample.address,sample.key]);
     sprites.push({image:r.image,revision:r.revision,hardAlpha:quality==="fast"||quality==="balanced"&&height<=3,points:flex(billboard(p,renderYaw,w,height,r.pivot,alignment),p,height,sample.contact&&contacts.length?cellContact(sample.address):null,null,wind,v.wind)});scatterInstances++;
     if(sample.shadow&&(quality!=="fast"||height>3))shadowObjects.push({address:sample.address,point:p,height,radius:Math.min(grid.horizontal_ft/2,w*.45),opacity:.35});
   }
@@ -580,7 +664,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     if(f.kind!=="top"||f.vegetation<=0)continue;
     if(styled){
       let cached=grassCache.get(f);if(!cached||cached.art!==art||cached.scale!==scale){cached={art,scale,samples:vegetationSamples(f,seed,art.profile,scale)};grassCache.set(f,cached);}for(const sample of cached.samples){
-        const wind=windFor(f.address),season=climateFor(f.address).season,k=JSON.stringify([sample.variant,season,wind.velocity_ft_s]);if(!vegetationVisualCache.has(k))vegetationVisualCache.set(k,vegetationRaster(art,sample.variant,wind,season));const r=vegetationVisualCache.get(k);if(!r)continue;animateRaster(r);const seasonal=art.seasonalRasters.get(season)?.get(sample.variant);if(seasonal)seasonalFoliage++;if(r!==(seasonal??art.vegetation.get(sample.variant)))animatedFoliage++;
+        const wind=windFor(f.address),season=climateFor(f.address).season,k=JSON.stringify([sample.variant,season,wind.velocity_ft_s]);if(!vegetationVisualCache.has(k))vegetationVisualCache.set(k,vegetationRaster(art,sample.variant,wind,season));const baseRaster=vegetationVisualCache.get(k);if(!baseRaster)continue;const r=animateRaster(baseRaster,sample.point);const seasonal=art.seasonalRasters.get(season)?.get(sample.variant);if(seasonal)seasonalFoliage++;if(baseRaster!==(seasonal??art.vegetation.get(sample.variant)))animatedFoliage++;
         sprites.push({image:r.image,revision:r.revision,hardAlpha:quality!=="full",points:flex(billboard(sample.point,renderYaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot,alignment),sample.point,sample.height,contacts.length?cellContact(f.address):null,null,wind,vegetationWind(art.profile,sample.variant,season))});
       }
     }else if(stableUnit(seed,f.address,"tuft"+f.triangle)<=f.vegetation){
@@ -588,7 +672,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
       sprites.push({image:tufts.get(f.variant),revision:0,hardAlpha:quality!=="full",points:flex(billboard(p,renderYaw,h*.9,h,undefined,alignment),p,h,contacts.length?cellContact(f.address):null,null,windFor(f.address),fixtureWind)});
     }
   }
-  let objectInstances=0,unresolvedObjects=0;
+  let objectInstances=0,unresolvedObjects=0,maskedObjects=0;
   if($("showActor").checked)for(const e of world.entities()){
     const h=anchorHeight(e,world.get(...e.address),grid);if(h===undefined){unresolvedObjects++;continue;}
     const o=physicalPosition(...e.address,grid);let p=[o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h],address=e.address,walking=false;
@@ -596,11 +680,24 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     if(!displayedAddress(address))continue;const screen=view(p);
     const margin=scale*e.visual.height_ft*4;if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
     const viewBinding=directionalBinding(e.visual,yaw,e.orientation_steps??0),wind=windFor(address),state=windState(viewBinding.wind,wind,viewBinding.state),binding=walking&&viewBinding.walk_state?{...viewBinding,state:viewBinding.walk_state,requireState:true}:state===viewBinding.state?viewBinding:{...viewBinding,state,requireState:true};
-    const entry=requestSprite(binding),s=entry.sprite??requestSprite(viewBinding).sprite;
+    const preferred=requestSprite(binding),entry=preferred.sprite?preferred:requestSprite(viewBinding),s=entry.sprite;
     if(!s){unresolvedObjects++;continue;}
-    s.update(clock.visual*1000).catch(err=>{entry.error=err.message;entry.sprite=null;});
-    sprites.push({image:s.image,revision:s.revision,emissive:e.light?.emissive??0,points:flex(billboard(p,renderYaw,s.width,s.height,s.pivot,alignment),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
+    const r=animateRaster(s,[e.id],err=>{entry.error=err.message;entry.sprite=null;});if(r.emissiveMask)maskedObjects++;
+    sprites.push({image:r.image,revision:r.revision,emissiveMask:r.emissiveMask,emissive:e.light?.emissive??0,points:flex(billboard(p,renderYaw,s.width,s.height,r.pivot,alignment),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
     if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,height:s.height,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
+  }
+  const weatherSprites=[];
+  if($("weatherVisual").checked&&cutLevel()===null){
+    // Cached by terrain/visibility identity and environmental inputs, not visual time.
+    const key=JSON.stringify([field.climate,field.wind,field.zones,seed,windEnabled]);
+    if(!weatherCache||weatherCache.faces!==faces||weatherCache.visible!==visible||weatherCache.key!==key){
+      const weatherField=windEnabled?field:{...field,wind:CALM,zones:field.zones.map(z=>({...z,wind:z.wind?CALM:undefined}))};
+      weatherCache={faces,visible,key,plan:precipitationPlan(faces,visible,weatherField,seed)};
+    }
+    for(const sample of weatherCache.plan){
+      const p=precipitationParticle(sample,clock.visual);
+      weatherSprites.push({image:weatherTextures.get(p.kind),revision:0,hardAlpha:true,emissive:.3,points:billboard(p.point,renderYaw,p.width,p.height,[.5,.5],alignment)});
+    }
   }
   const spriteMS=performance.now()-spritesStart,shadowStart=performance.now(),light=field.lighting??(styled?art.profile.lighting:null),shadowKey=JSON.stringify([light,$("contactShadows").checked,$("directionalShadows").checked,shadowObjects]);
   if(!shadowCache||shadowCache.visible!==visible||shadowCache.key!==shadowKey)shadowCache={visible,key:shadowKey,shadows:$("contactShadows").checked?contactShadows(visible,shadowObjects):[],sun:light&&$("directionalShadows").checked?directionalShadows(visible,shadowObjects,light,grid):{faces:[],truncated:false}};
@@ -609,7 +706,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const local=$("pointLights").checked?selectPointLights(collectPointLights(world,{simulationTime:clock.simulation,visualTime:clock.visual,poses,displayed:displayedAddress}),[...visible,...water],sprites):{lights:[],omitted:0};
   const walls=[];for(const [a,b] of selectionEdges(world,selection.filter(displayedAddress),grid)){const up=p=>[p[0],p[1],p[2]+grid.vertical_ft*.18],lo=p=>[p[0],p[1],p[2]+.015];walls.push({points:[lo(a),lo(b),up(b)],fade:[0,0,1]},{points:[lo(a),up(b),up(a)],fade:[0,1,1]});}
   const shadowMS=performance.now()-shadowStart,renderStart=performance.now();
-  gpu.render(visible,view,{projectionKey:ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,selected,pattern:$("pattern").checked,sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
+  gpu.render(visible,view,{projectionKey:ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
   const renderMS=performance.now()-renderStart;
   if($("wire").checked){
     if(!wireCells.has(selected[2]))wireCells.set(selected[2],domain.filter(a=>a[2]===selected[2]&&!hasVolume(world.get(...a).shape)));
@@ -657,8 +754,10 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
   const timing={frame_ms:performance.now()-started,frame_interval_ms:interval,terrain_ms:terrainMS,sprites_ms:spriteMS,shadow_ms:shadowMS,render_ms:renderMS};
-  profileSamples++;for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
-  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;Object.assign(profileFrame,gpu.diagnostics());profileSamples=0;profileSum={};$("performanceStatus").textContent=JSON.stringify(profileFrame);}
-  $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  profileSamples++;if(interval>0)profileIntervals.push(interval);for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
+  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;profileIntervals.sort((a,b)=>a-b);profileFrame.interval_p95_ms=Math.round((profileIntervals[Math.max(0,Math.ceil(profileIntervals.length*.95)-1)]??0)*10)/10;profileFrame.interval_max_ms=Math.round((profileIntervals.at(-1)??0)*10)/10;profileFrame.samples=profileSamples;Object.assign(profileFrame,gpu.diagnostics(),phasePool.diagnostics());profileSamples=0;profileSum={};profileIntervals=[];$("performanceStatus").textContent=JSON.stringify(profileFrame);}
+  $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,precipitation_instances:weatherSprites.length,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,emissive_mask_instances:maskedObjects,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+$("exportDiagnostics").onclick=()=>{try{downloadJSON(JSON.parse($("status").textContent),"hex-world-diagnostics.json");}catch(e){$("message").textContent=e.message;}};

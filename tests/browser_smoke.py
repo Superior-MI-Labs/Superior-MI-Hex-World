@@ -32,6 +32,51 @@ with sync_playwright() as p:
     page.locator("#resetView").click()
     page.locator("#loadActor").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
+    # Synthetic canonical pack verifies actual region mask qualification.
+    pixels=page.evaluate("""() => {
+      const c=document.createElement('canvas');c.width=6;c.height=2;const g=c.getContext('2d');
+      g.fillStyle='orange';g.fillRect(0,0,2,2);g.fillStyle='black';g.fillRect(2,0,1,2);g.fillStyle='white';g.fillRect(3,0,1,2);g.fillStyle='red';g.fillRect(4,0,2,2);
+      return c.toDataURL().split(',')[1];
+    }""")
+    import base64
+    region=lambda id,x,w=2: {"id":id,"kind":"region","texture":"sheet","rect_px":[x,0,w,2],"pivot":[.5,1]}
+    manifest={"schema":"smi-visual-pack/1","pack_id":"fixture.emissive","version":"1","license":"CC0-1.0","textures":{"sheet":{"path":"sheet.png","width_px":6,"height_px":2}},"assets":[region("lamp",0),region("mask",2),region("invalid-color",4),region("invalid-size",2,1)]}
+    page.route("**/test-emissive/manifest.json",lambda route: route.fulfill(json=manifest))
+    page.route("**/test-emissive/sheet.png",lambda route: route.fulfill(body=base64.b64decode(pixels),content_type="image/png"))
+    masks=page.evaluate("""async () => {
+      const {createAtlasSprite}=await import('/src/assets.mjs');
+      const binding={manifest:'./test-emissive/manifest.json',asset:'lamp',emissive_mask:'mask'};
+      const raster=await createAtlasSprite(binding),valid=raster.emissiveMask.width===2&&raster.emissiveMask.height===2;
+      const bad={};for(const id of ['invalid-color','invalid-size'])try{await createAtlasSprite({...binding,emissive_mask:id});bad[id]=false;}catch(e){bad[id]=e.message;}
+      return {valid,bad};
+    }""")
+    assert masks["valid"] and "grayscale" in masks["bad"]["invalid-color"] and "mismatch" in masks["bad"]["invalid-size"],masks
+    # Exercise the same import, qualification, placement and save pipeline as a real asset.
+    binding={"manifest":"./test-emissive/manifest.json","asset":"lamp","emissive_mask":"mask","height_ft":3}
+    page.locator("#importObjectBinding").set_input_files({"name":"emissive.json","mimeType":"application/json","buffer":json.dumps(binding).encode()})
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded' && document.querySelector('#spatialStatus').textContent.includes('emissive mask')")
+    page.locator("#placeActor").click()
+    page.locator("#objects").select_option(index=1)
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).emissive_mask_instances===1")
+    page.locator("summary",has_text="Object light source").click()
+    page.locator("#objectEmissive").fill("1")
+    page.locator("#applyObjectLight").click()
+    page.wait_for_function("document.querySelector('#objectLightStatus').textContent==='Light attached'")
+    with page.expect_download() as mask_save:
+        page.locator("#save").click()
+    saved_mask=json.loads(Path(mask_save.value.path()).read_text())
+    lamp=next(e for e in saved_mask["entities"] if e["visual"]["asset"]=="lamp")
+    assert lamp["visual"]["emissive_mask"]=="mask" and lamp["light"]["emissive"]==1
+    page.locator("#load").set_input_files({"name":"mask-world.json","mimeType":"application/json","buffer":json.dumps(saved_mask).encode()})
+    page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).emissive_mask_instances===1")
+    page.locator("#objects").select_option(label=page.locator("#objects option").filter(has_text="lamp").text_content())
+    page.locator("#removeObject").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===1")
+    page.locator("summary",has_text="Object light source").click()
+    page.locator("#resetView").click()
+    page.locator("#loadActor").click()
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'")
     # Real shared ZIP reader, canonical composition and independent input/slot choices.
     stream=BytesIO()
     root=Path("examples/chest-fixture")
@@ -59,13 +104,44 @@ with sync_playwright() as p:
       return {closedSame:equal(closedGold,closedGems),openDifferent:!equal(openGold,openGems),preset:equal(openGold,await draw({},gold,'treasure')),invalid,badHash,badInput};
     }""",digest)
     assert all(chest.values()),chest
-    catalog={"schema":"smi-public-catalog/1","packs":[{"id":"fixture","zip":"demo/chest-test.zip","archive_sha256":digest}],"assets":[{"id":"fixture.chest","name":"Chest","pack":"fixture","kind":"composition","capabilities":["world-use","compatible-slots"],"license":"CC0-1.0"}]}
+    # Recover a transient texture failure through the normal explicit load.
+    attempts=[]
+    def transient_texture(route):
+        attempts.append(route.request.url)
+        if len(attempts)==1:
+            route.abort()
+        else:
+            route.continue_()
+    texture_pattern="**/examples/chest-fixture/textures/chest.png"
+    page.route(texture_pattern,transient_texture)
+    retry_binding={"manifest":"./examples/chest-fixture/manifest.json?retry-test=1","asset":"fixture.chest","preset":"closed"}
+    retry_file={"name":"retry.json","mimeType":"application/json","buffer":json.dumps(retry_binding).encode()}
+    page.locator("#importObjectBinding").set_input_files(retry_file)
+    page.wait_for_function("document.querySelector('#assetStatus').textContent.includes('Texture unavailable')")
+    page.wait_for_function("document.querySelector('#importObjectBinding').value===''")
+    page.locator("#importObjectBinding").set_input_files(retry_file)
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'")
+    assert len(attempts)==2,attempts
+    page.unroute(texture_pattern,transient_texture)
+    shared=page.evaluate("""async()=>{
+      const {atlasPackSession,resolveAtlasBinding}=await import('/src/assets.mjs');
+      const binding={manifest:'./examples/chest-fixture/manifest.json?retry-test=1',asset:'fixture.chest'};
+      const a=await atlasPackSession(binding.manifest);
+      await resolveAtlasBinding(binding);
+      return a===await atlasPackSession(binding.manifest);
+    }""")
+    assert shared
+    catalog={"schema":"smi-public-catalog/1","packs":[{"id":"fixture","zip":"demo/chest-test.zip","archive_sha256":digest}],"assets":[{"id":"fixture.chest","name":"Chest","pack":"fixture","kind":"composition","capabilities":["world-use","compatible-slots"],"license":"CC0-1.0","category_path":["world","world.props","world.props.containers"],"perspective":["isometric"],"theme":["fantasy"],"medium":["raster-2d"],"family":"painterly-fantasy"}]}
     page.route("**/test-catalog.json",lambda route: route.fulfill(json=catalog))
     page.locator("summary",has_text="Browse published Atlas assets").click()
     page.locator("#catalogURL").fill("http://127.0.0.1:8000/test-catalog.json")
     page.locator("#refreshCatalog").click()
     page.wait_for_function("document.querySelector('#catalogAssets').options.length===1")
+    page.locator("#catalogCategory").select_option("world.props")
+    page.locator("#catalogPerspective").select_option("isometric")
+    page.locator("#catalogFamily").select_option("painterly-fantasy")
     page.locator("#catalogCapability").select_option("world-use")
+    assert page.locator("#catalogAssets").input_value()=="fixture.chest"
     page.locator("#loadCatalogAsset").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     page.locator("#loadChest").click()
@@ -112,6 +188,23 @@ with sync_playwright() as p:
       return [[far,near],[near,far]].map(f=>{r.render(f,view,{pattern:false});return r.readPixel(15,15);});
     }""")
     assert all(c[1]>240 and c[0]<10 for c in result),result
+    residency=page.evaluate("""()=>{
+      return import('/src/gpu.mjs').then(({createRenderer})=>{
+        const c=document.createElement('canvas');c.width=c.height=32;
+        const renderer=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+        const img=document.createElement('canvas');img.width=img.height=4;
+        img.getContext('2d').fillRect(0,0,4,4);
+        const sprite={image:img,revision:0,points:[[2,2,1],[10,2,1],[10,10,1],[2,10,1]]};
+        renderer.render([],view,{sprites:[sprite]});const initial=renderer.diagnostics();
+        renderer.render([],view,{});const idle=renderer.diagnostics();
+        renderer.render([],view,{sprites:[sprite]});const reused=renderer.diagnostics();
+        renderer.render([],view,{sprites:[{...sprite,revision:1}]});const changed=renderer.diagnostics();
+        return {initial,idle,reused,changed};
+      });
+    }""")
+    assert residency["initial"]["sprite_uploads"]==1
+    assert residency["idle"]["sprite_textures"]==1 and residency["idle"]["active_sprite_textures"]==0
+    assert residency["reused"]["sprite_uploads"]==0 and residency["changed"]["sprite_uploads"]==1
     alpha=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
       const c=document.createElement('canvas');c.width=c.height=64;
@@ -191,12 +284,19 @@ with sync_playwright() as p:
       const actor={image:img,revision:0,points:[[5,5,2],[20,5,2],[20,20,2],[5,20,2]]};
       r.render([face],view,{pattern:false,lighting,sprites:[actor],pointLights:[light]});const sprite=r.readPixel(12,12);
       r.render([face],view,{pattern:false,lighting,sprites:[{...actor,emissive:1}]});const emissive=r.readPixel(12,12);
-      return {center,far,off,sprite,emissive};
+      const mask=document.createElement('canvas');mask.width=2;mask.height=1;const m=mask.getContext('2d');m.fillStyle='black';m.fillRect(0,0,1,1);m.fillStyle='white';m.fillRect(1,0,1,1);
+      const masked={...actor,emissive:1,emissiveMask:mask,points:[[5,5,2],[35,5,2],[35,25,2],[5,25,2]]};
+      r.render([face],view,{pattern:false,lighting,sprites:[masked]});const dark=r.readPixel(7,12),bright=r.readPixel(32,12);
+      r.render([face],view,{pattern:false,lighting,sprites:[masked],softSprites:true});const softDark=r.readPixel(7,12),softBright=r.readPixel(32,12);
+      return {center,far,off,sprite,emissive,dark,bright,softDark,softBright};
     }""")
     assert local_light["center"][0]>120 and local_light["center"][1]<35,local_light
     assert local_light["far"]==local_light["off"],local_light
     assert local_light["sprite"][0]>240 and local_light["sprite"][1]<180,local_light
     assert all(v>245 for v in local_light["emissive"][:3]),local_light
+    assert all(140<v<180 for v in local_light["dark"][:3]),local_light
+    assert all(v>245 for v in local_light["bright"][:3]),local_light
+    assert local_light["softDark"]==local_light["dark"] and local_light["softBright"]==local_light["bright"],local_light
     # Lighting also shades full snow coverage and preserves unlit debug colors.
     lit=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
@@ -251,6 +351,7 @@ with sync_playwright() as p:
     page.locator("#windSpeed").fill("20")
     page.locator("#applyWind").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).wind_bent_sprites>0 && JSON.parse(document.querySelector('#status').textContent).wind_state_sprites>0")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).performance.animation_phase_variants>0")
     page.locator("#shelterWind").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_wind.velocity_ft_s[0]===0")
     page.locator("#windVisual").uncheck()
@@ -269,6 +370,41 @@ with sync_playwright() as p:
     page.locator("#season").select_option("summer")
     page.locator("#applyClimate").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).seasonal_sprites===0")
+    # Weather is presentation until an ordinary reviewed exposure plan is applied.
+    baseline_weather=page.evaluate("JSON.parse(document.querySelector('#status').textContent)")
+    page.locator("#precipitation").select_option("rain")
+    page.locator("#precipIntensity").fill("1")
+    page.locator("#applyClimate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances>0")
+    page.locator("#weatherVisual").uncheck()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances===0")
+    page.locator("#weatherVisual").check()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances>0")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).cell")==baseline_weather["cell"]
+    page.locator("#exposureSeconds").fill("3600")
+    page.locator("#previewExposure").click()
+    page.wait_for_function("!document.querySelector('#applyEditPlan').disabled")
+    page.locator("#applyEditPlan").evaluate("(b)=>b.click()")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).cell.components.surface.moisture>.9")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).simulation_seconds")==baseline_weather["simulation_seconds"]
+    page.locator("#undoEdit").click()
+    page.wait_for_function("c=>JSON.stringify(JSON.parse(document.querySelector('#status').textContent).cell)===JSON.stringify(c)",arg=baseline_weather["cell"])
+    page.locator("#precipitation").select_option("none")
+    page.locator("#applyClimate").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).precipitation_instances===0")
+    # Local resolved style round-trip, with failure preserving current style.
+    with page.expect_download() as style_download:
+        page.locator("#exportArt").click()
+    exported_style=json.loads(Path(style_download.value.path()).read_text())
+    assert exported_style["detail"]["top"]["manifest"].startswith("http://127.0.0.1:8000/")
+    exported_style["id"]="imported-fixture-style"
+    page.locator("#importArt").set_input_files({"name":"style.json","mimeType":"application/json","buffer":json.dumps(exported_style).encode()})
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='imported-fixture-style'")
+    page.locator("#importArt").set_input_files({"name":"bad-style.json","mimeType":"application/json","buffer":b"{}"})
+    page.wait_for_function("document.querySelector('#artStatus').textContent.startsWith('Previous style retained:')")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).art_style")=="imported-fixture-style"
+    page.locator("#resetArt").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='fantasy-meadow-fixture'")
     page.locator("#artURL").fill("./examples/no-such-style.json")
     page.locator("#loadArt").click()
     page.wait_for_function("document.querySelector('#artStatus').textContent.startsWith('Previous style retained:')")
@@ -613,6 +749,22 @@ with sync_playwright() as p:
     page.locator("summary",has_text="Session asset palette").click()
     page.locator("#pinAsset").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===1")
+    with page.expect_download() as saved_palette:
+        page.locator("#exportPalette").click()
+    palette_data=json.loads(Path(saved_palette.value.path()).read_text())
+    assert len(palette_data)==1
+    page.locator("#clearPalette").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===0")
+    page.locator("#importPalette").set_input_files({"name":"palette.json","mimeType":"application/json","buffer":json.dumps(palette_data).encode()})
+    page.wait_for_function("document.querySelector('#paletteStatus').textContent==='1 imported assets'")
+    page.locator("#importPalette").set_input_files({"name":"bad-palette.json","mimeType":"application/json","buffer":b"{}"})
+    page.wait_for_function("document.querySelector('#paletteStatus').textContent.startsWith('Previous palette retained:')")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===1")
+    assert page.locator("#assetPalette button").count()==1
+    with page.expect_download() as diagnostic:
+        page.locator("#exportDiagnostics").click()
+    diagnostics=json.loads(Path(diagnostic.value.path()).read_text())
+    assert "interval_p95_ms" in diagnostics["performance"] and "sprite_texture_bytes_estimate" in diagnostics["performance"]
     page.locator("#renderQuality").select_option("fast")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.quality==='fast'")
     page.locator("#paintTool").select_option("objects")

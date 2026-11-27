@@ -1,5 +1,5 @@
 // Presentation profile: binds existing Atlas IDs to Hex World visual roles.
-import {openAtlasPack} from "./assets.mjs";
+import {atlasPackSession} from "./assets.mjs";
 import {stableUnit} from "./materials.mjs";
 import {validateWindResponse,windState,SEASONS,validateLighting} from "./environment.mjs";
 import {adoptSpatialProfile} from "./spatial-assets.mjs";
@@ -85,7 +85,7 @@ function validateFamilies(families,manifest){
     return {...structuredClone(f),surface:f.surface??{},variants:vs};
   });
 }
-export async function loadStyle(profile,{baseURL=location.href,openPack=openAtlasPack}={}){
+export async function loadStyle(profile,{baseURL=location.href,openPack=atlasPackSession}={}){
   const s=resolveStyleProfile(profile,baseURL),packs=new Map(),rasters=new Map();
   function session(binding){
     const {manifest,archive_sha256}=binding,key=JSON.stringify([manifest,archive_sha256??null]);
@@ -159,7 +159,7 @@ export function validateStyleVariants(profile,catalog){
   if(catalog.materials){for(const k of Object.keys(profile.detail.materials??{}))assert(own(catalog.materials,k),"Unknown material binding: "+k);for(const f of profile.vegetation.families??[])for(const k of f.materials)assert(own(catalog.materials,k),"Unknown scatter material: "+k);}
   return profile;
 }
-export async function fetchStyle(reference,catalog,{fetcher=fetch,baseURL=location.href,openPack=openAtlasPack}={}){
+export async function fetchStyle(reference,catalog,{fetcher=fetch,baseURL=location.href,openPack=atlasPackSession}={}){
   const url=new URL(reference,baseURL);assert(["http:","https:"].includes(url.protocol)&&!url.username&&!url.password,"Invalid style URL");
   const response=await fetcher(url,{credentials:"omit",redirect:"error"});assert(response.ok,"Style unavailable");
   const raw=await response.text();assert(raw.length<=1e6,"Style exceeds size limit");
@@ -226,4 +226,34 @@ export function terrainTexturePlan(face,style){
   assert(keys.length<=4,"Terrain triangle exceeds four material layers");
   const modes=keys.map(k=>k===null?d?.color_mode??"grayscale":d.materials[k].color_mode??d.color_mode??"grayscale");
   return {role,keys,modes,weights:weights.map(w=>Array.from({length:4},(_,i)=>w.get(keys[i])??0))};
+}
+
+// Host pilot recipe, not a separate catalog or asset format.
+export function woodlandPreviewStyle(fixture,entries,fixtureURL){
+  const s=resolveStyleProfile(fixture,fixtureURL),byId=new Map(entries.map(e=>[e.id,e]));
+  function bind(id){
+    const e=byId.get(id);
+    assert(e?.binding?.archive_sha256&&e.license==="CC0-1.0","Missing approved woodland asset: "+id);
+    return artBinding(e.binding);
+  }
+  const grass="smi.world.fantasy.recovered.grass-20261125.",foliage="smi.world.fantasy.recovered.foliage-20261125.",
+    trees="smi.world.fantasy.recovered.trees-20261125.",fern="smi.world.fantasy.woodland.seasonal-fern-20261125a.";
+  s.id="published-woodland-preview";
+  const v=s.vegetation;
+  v.assets=Object.fromEntries([1,2,3].map(i=>["meadow-0"+i,bind(grass+"green-grass-0"+i)]));
+  v.min_height_ft=.45;v.max_height_ft=.85;
+  // Deliberate host wind override for static grass regions.
+  v.wind=Object.fromEntries(Object.keys(v.assets).map(k=>[k,{bend:.4,reference_speed_ft_s:20}]));
+  v.seasonal={autumn:Object.fromEntries([1,2,3].map(i=>["meadow-0"+i,bind(grass+"golden-dry-grass-0"+i)]))};
+  v.families=[
+    {id:"woodland-understory",materials:["soil"],density:.18,samples_per_triangle:1,far_px_per_ft:5,near_px_per_ft:14,max_grade:1,
+      surface:{growth:[.2,1],scorch:[0,.5]},contact:true,shadow:true,spacing_ft:2,
+      variants:[{id:"shrub",asset:bind(foliage+"natural-round-bush"),weight:1},
+        {id:"fern",asset:bind(fern+"summer"),height_ft:1.5,weight:2,
+          seasonal:Object.fromEntries(["spring","autumn","winter"].map(k=>[k,bind(fern+k)]))}]},
+    {id:"woodland-trees",materials:["soil"],density:.035,samples_per_triangle:1,far_px_per_ft:2,near_px_per_ft:12,max_grade:.7,
+      surface:{growth:[.4,1]},shadow:true,spacing_ft:5,
+      variants:[{id:"broadleaf",asset:bind(trees+"painted-broadleaf-tree"),weight:1}]}
+  ];
+  return validateStyle(s);
 }

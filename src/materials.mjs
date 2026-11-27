@@ -51,9 +51,12 @@ export function appearance(catalog,seed,address,cell,kind){
   const color=mix(mix(m.top,green,plant),(catalog.transitions??TRANSITION_DEFAULT).scorch_color,s.scorch*.85).map(v=>v*(1-.22*s.moisture));
   return {color,cover:[s.leaves,s.snow,s.scorch],vegetation:plant*(1-s.snow)*(1-s.scorch),variant:grass.id};
 }
-export function ignite(catalog,cell){
+export function surfaceSubmerged(cell,subdivisions=2){
+  return !!cell.components?.water?.fill&&cell.shape.upper[6]>cell.shape.lower[6]&&cell.components.water.fill>cell.shape.upper[6]/subdivisions;
+}
+export function ignite(catalog,cell,subdivisions=2){
   const s=surface(cell.components?.surface);
-  if(!Object.hasOwn(catalog.materials,cell.material)||!catalog.materials[cell.material].vegetation||s.growth+s.leaves<=0||s.moisture>=.9||s.snow>=.95)return s;
+  if(!Object.hasOwn(catalog.materials,cell.material)||!catalog.materials[cell.material].vegetation||s.growth+s.leaves<=0||s.moisture>=.9||s.snow>=.95||surfaceSubmerged(cell,subdivisions))return s;
   return {...s,burn:catalog.vegetation.burn_seconds};
 }
 export function advanceSurface(s,seconds,burnSeconds){
@@ -63,3 +66,22 @@ export function advanceSurface(s,seconds,burnSeconds){
   return {...s,burn:Math.max(0,s.burn-dt),growth:Math.max(0,s.growth-fraction),leaves:Math.max(0,s.leaves-fraction),health:Math.max(0,s.health-fraction),snow:Math.max(0,s.snow-fraction),scorch:Math.min(1,s.scorch+fraction)};
 }
 export function withSurface(cell,state){return {...cell,components:{...cell.components,surface:surface(state)}};}
+
+// Explicit authored exposure, not automatic weather or a view-dependent simulation.
+// Rates are provisional host defaults: exponential approach gives stable
+// results when an exposure is split into smaller intervals.
+export function weatherSurface(cell,climate,seconds,subdivisions=2){
+  assert(Number.isFinite(seconds)&&seconds>=0&&seconds<=86400,"Invalid exposure duration");
+  const s=surface(cell.components?.surface);
+  if(!seconds)return s;
+  const {precipitation,temperature_c:temperature,intensity}=climate;
+  assert(["none","rain","snow","hail"].includes(precipitation)&&Number.isFinite(temperature)&&temperature>=-100&&temperature<=100&&unit(intensity)&&(precipitation!=="none"||intensity===0),"Invalid exposure climate");
+  const rain=(precipitation==="rain"||precipitation==="hail"||precipitation==="snow"&&temperature>0)?intensity:0;
+  const snowfall=precipitation==="snow"&&temperature<=0?intensity:0;
+  const submerged=surfaceSubmerged(cell,subdivisions);
+  const approach=(value,target,rate)=>target+(value-target)*Math.exp(-rate*seconds);
+  const snow=approach(s.snow,snowfall?1:temperature>0?0:s.snow,snowfall/600+Math.max(0,temperature)/12000);
+  const moisture=submerged?1:approach(s.moisture,rain?1:0,rain/300+(rain?0:Math.max(0,temperature)/36000));
+  const burn=moisture>=.9||snow>=.95?0:s.burn;
+  return surface({...s,moisture,snow,burn});
+}
