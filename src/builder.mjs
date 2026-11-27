@@ -81,3 +81,21 @@ export function planPath(world,waypoints,{kind="road",radius=0,height=2,material
   });
   return makeEditPlan(world,edits,kind==="river"?"Build fixed river":"Build road");
 }
+
+// A reproducible pilot recipe composed from existing builders. The user reviews
+// a single ordinary edit plan, not a sequence of partially applied commands.
+export function planWoodlandClearing(world,anchor,{tree,chest=null}={}){
+  assert(validAddress(anchor),"Invalid clearing anchor");
+  const at=(q,r)=>[anchor[0]+q,anchor[1]+r,anchor[2]];
+  const road=planPath(world,[at(-1,-1),at(2,-1)],{kind:"road",material:"soil",height:2});
+  const creek=planPath(world,[at(-2,1),at(1,1)],{kind:"river",material:"stone",height:1,fill:.8,speed:2});
+  const grove=planGrove(world,[at(-2,0)],{bindings:[tree],density:1,seed:"woodland-acceptance"});
+  assert(!grove.skipped,"Clearing tree needs a free, dry supporting cell");
+  const entities=[...grove.plan.entities];
+  if(chest){
+    const placement=planObjectPlacement(world,[at(1,0)],{bindings:[chest],density:1,seed:"woodland-chest"});
+    assert(!placement.skipped,"Clearing chest needs a free, dry supporting cell");
+    entities.push(...placement.entities);
+  }
+  return makeEditPlan(world,[...road.edits,...creek.edits],"Woodland acceptance clearing",entities);
+}

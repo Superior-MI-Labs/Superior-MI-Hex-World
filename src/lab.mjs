@@ -4,7 +4,7 @@ import {planVertexEdit,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
 import {buildWaterSurfaces,stepWater,waterTicks} from "./water.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,selectionBrush,mergeSelection,CellEditHistory,makeEditPlan,inspectEditPlan,applyEditPlan,cellShape,cellMaterial,cellWater,hexStroke,exportBuildContext} from "./editor.mjs";
-import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath} from "./builder.mjs";
+import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing} from "./builder.mjs";
 import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
@@ -53,10 +53,31 @@ let capture=new Map(),captureAnchor=null;
 const prefabSelect=$("prefab");for(const p of prefabCatalog)prefabSelect.add(new Option(p.name,p.id));
 const demoVisual={manifest:"./examples/atlas-character/manifest.json",asset:"smi.example.robot.states",state:"idle",height_ft:4,walk_state:"walk"};
 let actor=null,spriteRequest=0,art=null,activeBinding=demoVisual;
-const palette=new Map();
+const palette=new Map();let paletteRequest=0;
 function refreshPalette(){const host=$("assetPalette");host.replaceChildren();for(const [key,v] of palette){const b=document.createElement("button"),thumb=document.createElement("canvas");b.type="button";b.title=v.binding.asset;thumb.width=48;thumb.height=48;thumb.style.cssText="width:48px;height:48px;vertical-align:middle;border:0";const w=v.image.width,h=v.image.height,s=Math.min(48/w,48/h);thumb.getContext("2d").drawImage(v.image,(48-w*s)/2,(48-h*s)/2,w*s,h*s);b.append(thumb,document.createTextNode(" "+v.binding.asset));b.onclick=()=>loadBinding(v.binding);host.append(b);}}
-$("pinAsset").onclick=()=>{if(!actor)return;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
-$("clearPalette").onclick=()=>{palette.clear();refreshPalette();$("paletteStatus").textContent="Palette cleared";};
+$("pinAsset").onclick=()=>{if(!actor)return;paletteRequest++;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
+$("clearPalette").onclick=()=>{paletteRequest++;palette.clear();refreshPalette();$("paletteStatus").textContent="Palette cleared";};
+$("exportPalette").onclick=()=>downloadJSON([...palette.values()].map(v=>v.binding),"hex-asset-palette.json");
+$("importPalette").onchange=async()=>{
+  const file=$("importPalette").files[0];$("importPalette").value="";if(!file)return;
+  const request=++paletteRequest;
+  try{
+    if(file.size>512000)throw Error("Palette exceeds 512 KB");
+    const raw=JSON.parse(await file.text());
+    if(!Array.isArray(raw)||raw.length>24)throw Error("Palette must contain up to 24 sprite bindings");
+    const next=new Map();
+    for(const source of raw){
+      // Keep saved pins/height/state intact; re-qualify actual rasters before commit.
+      const {binding,next:raster}=await qualifyBinding(spriteBinding(source));
+      if(request!==paletteRequest)return;
+      const key=visualKey(binding);if(next.has(key))throw Error("Duplicate palette binding");
+      next.set(key,{binding,image:raster.image});
+    }
+    if(request!==paletteRequest)return;
+    palette.clear();for(const [key,value] of next)palette.set(key,value);
+    refreshPalette();$("paletteStatus").textContent=palette.size+" imported assets";
+  }catch(e){if(request===paletteRequest)$("paletteStatus").textContent="Previous palette retained: "+e.message;}
+};
 const spriteCache=new Map();
 function requestSprite(binding,retry=false){
   const key=visualKey(binding)+(binding.requireState?":strict-state":"");
@@ -540,6 +561,29 @@ $("previewPath").onclick=()=>procedure(()=>{
   stageBuilder(plan);
 });
 $("previewGrove").onclick=()=>procedure(()=>{const {plan,skipped}=planGrove(world,selection,{bindings:builderBindings(),seed:$("builderSeed").value,density:Number($("objectDensity").value)});stageBuilder(plan,"; "+skipped+" skipped");});
+$("previewWoodland").onclick=async()=>{
+  const owner=world,anchor=[...selected],request=++planRequest;
+  stagedPlan=null;$("applyEditPlan").disabled=true;$("planStatus").textContent="Resolving woodland preview assets";
+  try{
+    const entries=await fetchCatalog(ATLAS_CATALOG);
+    async function resolve(id){
+      const entry=entries.find(e=>e.id===id);
+      if(!entry?.binding.archive_sha256||entry.license!=="CC0-1.0")throw Error("Missing approved preview asset: "+id);
+      const {height_ft,...source}=entry.binding;
+      return (await resolveAtlasBinding(source)).binding;
+    }
+    const [tree,chest]=await Promise.all([
+      resolve("smi.world.fantasy.recovered.trees-20261125.painted-broadleaf-tree"),
+      resolve("smi.world.fantasy.recovered.chests-20261125.weathered-wood-chest")
+    ]);
+    if(owner!==world||request!==planRequest)return;
+    const plan=planWoodlandClearing(world,anchor,{tree,chest});
+    if([...plan.edits.map(e=>e.address),...plan.entities.map(e=>e.value.address)].some(a=>!domain.some(b=>a.every((v,i)=>v===b[i]))||!displayedAddress(a)))throw Error("Clearing crosses the active editor region");
+    await qualifyObjects(plan.entities);
+    if(owner!==world||request!==planRequest)return;
+    stageBuilder(plan,"; static chest preview; apply separately");
+  }catch(e){if(owner===world&&request===planRequest)procedure(()=>{throw e;});}
+};
 $("exportStagedPlan").onclick=()=>{if(stagedPlan)downloadJSON(stagedPlan.plan,"hex-proposed-plan.json");else $("planStatus").textContent="Preview a plan first";};
 $("importEditPlan").onchange=async()=>{const owner=world,request=++planRequest;$("applyEditPlan").disabled=true;stagedPlan=null;try{const f=$("importEditPlan").files[0];if(!f)return;if(f.size>2e6)throw Error("Plan exceeds 2 MB");const raw=JSON.parse(await f.text());if(owner!==world||request!==planRequest)return;const checked=inspectEditPlan(world,raw);await qualifyObjects(checked.plan.entities??[]);if(owner!==world||request!==planRequest)return;stageBuilder(raw);}catch(e){if(owner===world&&request===planRequest){stagedPlan=null;$("applyEditPlan").disabled=true;$("planStatus").textContent=e.message;}}finally{if(owner===world)$("importEditPlan").value="";}};
 $("applyEditPlan").onclick=()=>{try{if(!stagedPlan)return;if(applyEditPlan(world,history,stagedPlan.plan)){dirty||=stagedPlan.plan.edits.length>0;for(const e of stagedPlan.plan.entities??[])playback.delete(e.id);}stagedPlan=null;$("applyEditPlan").disabled=true;sync();$("planStatus").textContent="Plan applied";}catch(e){$("planStatus").textContent=e.message;}};
@@ -550,7 +594,7 @@ window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(k==="escape
 window.addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
 window.addEventListener("blur",()=>keys.clear());
 document.addEventListener("focusin",e=>{if(editableTarget(e.target))keys.clear();});
-let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSum={},profileSamples=0;
+let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSum={},profileSamples=0,profileIntervals=[];
 
 function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,interval/1000);last=ms;const started=performance.now(),motion=cameraKeys(keys,dt,scale);panX+=motion.dx;panY+=motion.dy;if(motion.scale!==scale){scale=motion.scale;$("zoom").value=scale;}if(turn){const t=sampleTurn(turn,ms);renderYaw=t.done?yaw:t.yaw;if(t.done)turn=null;}clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);const terrainStart=performance.now();refreshRegion();ctx.clearRect(0,0,900,450);
   if(dirty){visibleCache=null;grassCache=new WeakMap();shadowCache=null;wireCells=new Map();scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});if($("ambientOcclusion").checked)faces=terrainOcclusion(world,faces);waterSurfaces=buildWaterSurfaces(renderWorld,level===null?domain:domain.filter(displayedAddress),{sides:true});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
@@ -675,8 +719,10 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
   const timing={frame_ms:performance.now()-started,frame_interval_ms:interval,terrain_ms:terrainMS,sprites_ms:spriteMS,shadow_ms:shadowMS,render_ms:renderMS};
-  profileSamples++;for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
-  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;Object.assign(profileFrame,gpu.diagnostics());profileSamples=0;profileSum={};$("performanceStatus").textContent=JSON.stringify(profileFrame);}
+  profileSamples++;if(interval>0)profileIntervals.push(interval);for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
+  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;profileIntervals.sort((a,b)=>a-b);profileFrame.interval_p95_ms=Math.round((profileIntervals[Math.max(0,Math.ceil(profileIntervals.length*.95)-1)]??0)*10)/10;profileFrame.interval_max_ms=Math.round((profileIntervals.at(-1)??0)*10)/10;profileFrame.samples=profileSamples;Object.assign(profileFrame,gpu.diagnostics());profileSamples=0;profileSum={};profileIntervals=[];$("performanceStatus").textContent=JSON.stringify(profileFrame);}
   $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+$("exportDiagnostics").onclick=()=>{try{downloadJSON(JSON.parse($("status").textContent),"hex-world-diagnostics.json");}catch(e){$("message").textContent=e.message;}};

@@ -139,6 +139,23 @@ with sync_playwright() as p:
       return [[far,near],[near,far]].map(f=>{r.render(f,view,{pattern:false});return r.readPixel(15,15);});
     }""")
     assert all(c[1]>240 and c[0]<10 for c in result),result
+    residency=page.evaluate("""()=>{
+      return import('/src/gpu.mjs').then(({createRenderer})=>{
+        const c=document.createElement('canvas');c.width=c.height=32;
+        const renderer=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+        const img=document.createElement('canvas');img.width=img.height=4;
+        img.getContext('2d').fillRect(0,0,4,4);
+        const sprite={image:img,revision:0,points:[[2,2,1],[10,2,1],[10,10,1],[2,10,1]]};
+        renderer.render([],view,{sprites:[sprite]});const initial=renderer.diagnostics();
+        renderer.render([],view,{});const idle=renderer.diagnostics();
+        renderer.render([],view,{sprites:[sprite]});const reused=renderer.diagnostics();
+        renderer.render([],view,{sprites:[{...sprite,revision:1}]});const changed=renderer.diagnostics();
+        return {initial,idle,reused,changed};
+      });
+    }""")
+    assert residency["initial"]["sprite_uploads"]==1
+    assert residency["idle"]["sprite_textures"]==1 and residency["idle"]["active_sprite_textures"]==0
+    assert residency["reused"]["sprite_uploads"]==0 and residency["changed"]["sprite_uploads"]==1
     alpha=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
       const c=document.createElement('canvas');c.width=c.height=64;
@@ -653,6 +670,21 @@ with sync_playwright() as p:
     page.locator("summary",has_text="Session asset palette").click()
     page.locator("#pinAsset").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===1")
+    with page.expect_download() as saved_palette:
+        page.locator("#exportPalette").click()
+    palette_data=json.loads(Path(saved_palette.value.path()).read_text())
+    assert len(palette_data)==1
+    page.locator("#clearPalette").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===0")
+    page.locator("#importPalette").set_input_files({"name":"palette.json","mimeType":"application/json","buffer":json.dumps(palette_data).encode()})
+    page.wait_for_function("document.querySelector('#paletteStatus').textContent==='1 imported assets'")
+    page.locator("#importPalette").set_input_files({"name":"bad-palette.json","mimeType":"application/json","buffer":b"{}"})
+    page.wait_for_function("document.querySelector('#paletteStatus').textContent.startsWith('Previous palette retained:')")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).builder.palette")==1
+    with page.expect_download() as diagnostic:
+        page.locator("#exportDiagnostics").click()
+    diagnostics=json.loads(Path(diagnostic.value.path()).read_text())
+    assert "interval_p95_ms" in diagnostics["performance"] and "sprite_texture_bytes_estimate" in diagnostics["performance"]
     page.locator("#renderQuality").select_option("fast")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.quality==='fast'")
     page.locator("#paintTool").select_option("objects")

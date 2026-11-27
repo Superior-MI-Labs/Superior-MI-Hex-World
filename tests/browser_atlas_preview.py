@@ -92,42 +92,33 @@ with sync_playwright() as p:
     page.locator("#rotateObject").click()
     page.wait_for_function("document.querySelector('#objectOrientation').textContent==='60°'")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).unresolved_objects===0")
-    # Construct the acceptance clearing using the existing pure builders and
-    # ordinary reviewed mixed edit-plan contract. No new scene format or mode.
+    # Exercise the real catalog place/rotate route above, then remove that
+    # temporary object and construct both pinned props in one reviewed plan.
+    page.locator("#removeObject").click()
+    page.wait_for_function("n=>JSON.parse(document.querySelector('#status').textContent).world_objects===n",arg=before)
     with page.expect_download() as baseline:
         page.locator("#save").click()
     base_world=json.loads(Path(baseline.value.path()).read_text())
-    plan=page.evaluate("""async saved=>{
-      const {World}=await import('/src/core.mjs');
-      const {makeEditPlan}=await import('/src/editor.mjs');
-      const {planPath,planGrove}=await import('/src/builder.mjs');
-      const {fetchCatalog}=await import('/src/catalog.mjs');
-      const {resolveAtlasBinding}=await import('/src/assets.mjs');
-      const w=World.restore(saved),entries=await fetchCatalog();
-      const tree=entries.find(e=>e.id==='smi.world.fantasy.recovered.trees-20261125.painted-broadleaf-tree');
-      if(!tree)throw Error('Missing published tree');
-      const {height_ft,...source}=tree.binding,{binding}=await resolveAtlasBinding(source);
-      const road=planPath(w,[[-1,-1,0],[2,-1,0]],{kind:'road',material:'soil',height:2});
-      const creek=planPath(w,[[-2,1,0],[1,1,0]],{kind:'river',material:'stone',height:1,fill:.8,speed:2});
-      const grove=planGrove(w,[[-2,0,0]],{bindings:[binding],density:1,seed:'woodland-acceptance'});
-      if(grove.skipped)throw Error('Pilot tree placement skipped');
-      return makeEditPlan(w,[...road.edits,...creek.edits],'Woodland acceptance clearing',grove.plan.entities);
-    }""",base_world)
-    (out/"clearing-edit-plan.json").write_text(json.dumps(plan,indent=2))
-    page.locator("#importEditPlan").set_input_files({"name":"clearing.json","mimeType":"application/json","buffer":json.dumps(plan).encode()})
+    page.locator("#previewWoodland").evaluate("(b)=>b.click()")
     page.wait_for_function("!document.querySelector('#applyEditPlan').disabled",timeout=120000)
+    with page.expect_download() as staged:
+        page.locator("#exportStagedPlan").evaluate("(b)=>b.click()")
+    plan=json.loads(Path(staged.value.path()).read_text())
+    (out/"clearing-edit-plan.json").write_text(json.dumps(plan,indent=2))
+    assert len(plan["edits"])==8 and len(plan["entities"])==2
+    entity_id=next(e["id"] for e in plan["entities"] if e["value"]["visual"]["asset"]==asset)
     page.locator("#applyEditPlan").evaluate("(b)=>b.click()")
     total=before+2
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.water_triangles>0&&s.unresolved_objects===0}",arg=total)
     page.locator("#undoEdit").click()
-    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n-1&&s.water_triangles===0}",arg=total)
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n-2&&s.water_triangles===0}",arg=total)
     page.locator("#redoEdit").click()
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.water_triangles>0}",arg=total)
     page.locator("#wire").uncheck()
     page.locator("#zoom").evaluate("(e)=>{e.value='12';e.dispatchEvent(new Event('input'))}")
     for yaw in range(6):
         page.wait_for_function("yaw=>{const c=JSON.parse(document.querySelector('#status').textContent).camera;return c.yaw===yaw&&!c.rotating}",arg=yaw)
-        page.locator("#scene").screenshot(path=str(out/f"woodland-view-{yaw}.png"))
+        page.locator("#viewport").screenshot(path=str(out/f"woodland-view-{yaw}.png"))
         page.locator("#rotate").click()
     page.wait_for_function("(()=>{const c=JSON.parse(document.querySelector('#status').textContent).camera;return c.yaw===0&&!c.rotating})()")
     with page.expect_download() as saved:
@@ -137,7 +128,7 @@ with sync_playwright() as p:
     fixed=[c["value"]["components"]["water"] for chunk in world["chunks"] for c in chunk["cells"] if c["value"].get("components",{}).get("water",{}).get("fixed")]
     assert len(fixed)==4 and all(w["fill"]==.8 for w in fixed)
     entity=next(e for e in world["entities"] if e["id"]==entity_id)
-    assert entity["orientation_steps"]==1 and entity["visual"]["asset"]==asset and entity["visual"]["height_ft"]==2.5
+    assert entity["orientation_steps"]==next(e["value"]["orientation_steps"] for e in plan["entities"] if e["id"]==entity_id) and entity["visual"]["asset"]==asset and entity["visual"]["height_ft"]==2.5
     pack=next(p for p in report["packs"] if p["id"]=="fantasy-recovered-chests-20261125")
     assert entity["visual"]["archive_sha256"]==pack["archive_sha256"]
     with page.expect_download() as style:
@@ -152,8 +143,6 @@ with sync_playwright() as p:
     page.locator("#load").set_input_files({"name":"world.json","mimeType":"application/json","buffer":json.dumps(world).encode()})
     page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
     page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n}",arg=total,timeout=120000)
-    page.locator("#objects").select_option(value=entity_id)
-    assert page.locator("#objectOrientation").text_content()=="60°"
     with page.expect_download() as restored:
         page.locator("#save").click()
     restored_world=json.loads(Path(restored.value.path()).read_text())
