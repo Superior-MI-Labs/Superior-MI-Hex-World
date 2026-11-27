@@ -32,7 +32,7 @@ with sync_playwright() as p:
     fixture_performance=measure()
     report=page.evaluate("""async counts=>{
       const {fetchCatalog}=await import('/src/catalog.mjs');
-      const {openAtlasPack}=await import('/src/assets.mjs');
+      const {atlasPackSession}=await import('/src/assets.mjs');
       const entries=await fetchCatalog(),rows=[],packs=[];
       for(const [id,expected] of Object.entries(counts)){
         const group=entries.filter(e=>e.pack===id);
@@ -40,7 +40,7 @@ with sync_playwright() as p:
         if(group.length!==expected){packRow.error='Inventory count mismatch';continue;}
         const {manifest,archive_sha256}=group[0].binding;
         Object.assign(packRow,{manifest,archive_sha256});
-        let pack;try{pack=await openAtlasPack(manifest,undefined,archive_sha256);packRow.ok=true;}
+        let pack;try{pack=await atlasPackSession(manifest,undefined,archive_sha256);packRow.ok=true;}
         catch(e){packRow.error=String(e);continue;}
         for(const e of group){
           const row={id:e.id,pack:id,license:e.license,visual_qa:e.visual_qa,ok:false};rows.push(row);
@@ -86,12 +86,45 @@ with sync_playwright() as p:
     before=status()["world_objects"]
     page.locator("#placeActor").click()
     page.wait_for_function("n=>JSON.parse(document.querySelector('#status').textContent).world_objects===n+1",arg=before)
-    page.locator("#objects").select_option(index=before)
+    page.locator("#objects").select_option(label=page.locator("#objects option").filter(has_text=asset).text_content())
     page.wait_for_function("id=>JSON.parse(document.querySelector('#status').textContent).selected_object_view===id",arg=asset)
     entity_id=page.locator("#objects").input_value()
     page.locator("#rotateObject").click()
     page.wait_for_function("document.querySelector('#objectOrientation').textContent==='60°'")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).unresolved_objects===0")
+    # Construct the acceptance clearing using the existing pure builders and
+    # ordinary reviewed mixed edit-plan contract. No new scene format or mode.
+    with page.expect_download() as baseline:
+        page.locator("#save").click()
+    base_world=json.loads(Path(baseline.value.path()).read_text())
+    plan=page.evaluate("""async saved=>{
+      const {World}=await import('/src/core.mjs');
+      const {makeEditPlan}=await import('/src/editor.mjs');
+      const {planPath,planGrove}=await import('/src/builder.mjs');
+      const {fetchCatalog}=await import('/src/catalog.mjs');
+      const {resolveAtlasBinding}=await import('/src/assets.mjs');
+      const w=World.restore(saved),entries=await fetchCatalog();
+      const tree=entries.find(e=>e.id==='smi.world.fantasy.recovered.trees-20261125.painted-broadleaf-tree');
+      if(!tree)throw Error('Missing published tree');
+      const {height_ft,...source}=tree.binding,{binding}=await resolveAtlasBinding(source);
+      const road=planPath(w,[[-1,-1,0],[2,-1,0]],{kind:'road',material:'soil',height:2});
+      const creek=planPath(w,[[-2,1,0],[1,1,0]],{kind:'river',material:'stone',height:1,fill:.8,speed:2});
+      const grove=planGrove(w,[[-2,0,0]],{bindings:[binding],density:1,seed:'woodland-acceptance'});
+      if(grove.skipped)throw Error('Pilot tree placement skipped');
+      return makeEditPlan(w,[...road.edits,...creek.edits],'Woodland acceptance clearing',grove.plan.entities);
+    }""",base_world)
+    (out/"clearing-edit-plan.json").write_text(json.dumps(plan,indent=2))
+    page.locator("#importEditPlan").set_input_files({"name":"clearing.json","mimeType":"application/json","buffer":json.dumps(plan).encode()})
+    page.wait_for_function("!document.querySelector('#applyEditPlan').disabled",timeout=120000)
+    page.locator("#applyEditPlan").evaluate("(b)=>b.click()")
+    total=before+2
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.water_triangles>0&&s.unresolved_objects===0}",arg=total)
+    page.locator("#undoEdit").click()
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n-1&&s.water_triangles===0}",arg=total)
+    page.locator("#redoEdit").click()
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.water_triangles>0}",arg=total)
+    page.locator("#wire").uncheck()
+    page.locator("#zoom").evaluate("(e)=>{e.value='12';e.dispatchEvent(new Event('input'))}")
     for yaw in range(6):
         page.wait_for_function("yaw=>{const c=JSON.parse(document.querySelector('#status').textContent).camera;return c.yaw===yaw&&!c.rotating}",arg=yaw)
         page.locator("#scene").screenshot(path=str(out/f"woodland-view-{yaw}.png"))
@@ -100,6 +133,9 @@ with sync_playwright() as p:
     with page.expect_download() as saved:
         page.locator("#save").click()
     world=json.loads(Path(saved.value.path()).read_text())
+    (out/"clearing-world.json").write_text(json.dumps(world,indent=2))
+    fixed=[c["value"]["components"]["water"] for chunk in world["chunks"] for c in chunk["cells"] if c["value"].get("components",{}).get("water",{}).get("fixed")]
+    assert len(fixed)==4 and all(w["fill"]==.8 for w in fixed)
     entity=next(e for e in world["entities"] if e["id"]==entity_id)
     assert entity["orientation_steps"]==1 and entity["visual"]["asset"]==asset and entity["visual"]["height_ft"]==2.5
     pack=next(p for p in report["packs"] if p["id"]=="fantasy-recovered-chests-20261125")
@@ -115,13 +151,16 @@ with sync_playwright() as p:
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).art_style==='published-woodland-preview'",timeout=180000)
     page.locator("#load").set_input_files({"name":"world.json","mimeType":"application/json","buffer":json.dumps(world).encode()})
     page.wait_for_function("document.querySelector('#message').textContent==='World imported'")
-    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n}",arg=before+1,timeout=120000)
+    page.wait_for_function("n=>{const s=JSON.parse(document.querySelector('#status').textContent);return s.world_objects===n&&s.unresolved_objects===0&&s.object_instances>=n}",arg=total,timeout=120000)
     page.locator("#objects").select_option(value=entity_id)
     assert page.locator("#objectOrientation").text_content()=="60°"
     with page.expect_download() as restored:
         page.locator("#save").click()
-    recovered=next(e for e in json.loads(Path(restored.value.path()).read_text())["entities"] if e["id"]==entity_id)
+    restored_world=json.loads(Path(restored.value.path()).read_text())
+    recovered=next(e for e in restored_world["entities"] if e["id"]==entity_id)
     assert recovered==entity
+    assert restored_world["chunks"]==world["chunks"] and restored_world["entities"]==world["entities"]
+    report["clearing"]={"edit_cells":len(plan["edits"]),"objects":len(plan["entities"]),"fixed_water_cells":len(fixed),"undo_redo":True,"frozen_water_persisted":True}
     report["round_trip"]={"entity":entity,"restored":True,"style":profile["id"],"camera_views":6,"directional_qa":"not claimed; static billboard"}
     report["page_errors"]=errors
     (out/"report.json").write_text(json.dumps(report,indent=2))

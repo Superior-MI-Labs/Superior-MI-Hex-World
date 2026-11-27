@@ -102,7 +102,7 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest
       else{target=new URL(t.path,url);assert(target.origin===url.origin&&target.href.startsWith(new URL(".",url).href),"Texture escapes pack directory");}
       try{return await new Promise((resolve,reject)=>{const i=new Image();i.crossOrigin="anonymous";i.onload=()=>{try{assert(i.naturalWidth===t.width_px&&i.naturalHeight===t.height_px,"Texture dimensions mismatch");resolve(i);}catch(e){reject(e);}};i.onerror=()=>reject(Error("Texture unavailable: "+key));i.src=String(target);});}
       finally{if(temporary)URL.revokeObjectURL(target);}
-    })();images.set(key,p);return p;
+    })().catch(e=>{if(images.get(key)===p)images.delete(key);throw e;});images.set(key,p);return p;
   }
   return {describe(asset){return structuredClone(validateSpritePack(pack,asset).get(asset));},createRaster({asset,state=null,regionOnly=false,requireState=false,...options}){
   const map=validateSpritePack(pack,asset);
@@ -129,20 +129,20 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest
 // Share decoded sheets and archive resolution across object variants.
 // Failed sessions are retryable; bound the session cache, not world records.
 const packSessions=new Map();
-async function packSession(manifest,archive_sha256,registry){
+export async function atlasPackSession(manifest,registry,archive_sha256=null){
   if(registry)return openAtlasPack(manifest,registry,archive_sha256);
   const key=JSON.stringify([new URL(manifest,location.href).href,archive_sha256??null]);
   if(!packSessions.has(key)){
-    const p=openAtlasPack(manifest,undefined,archive_sha256).catch(e=>{packSessions.delete(key);throw e;});packSessions.set(key,p);
+    const p=openAtlasPack(manifest,undefined,archive_sha256).catch(e=>{if(packSessions.get(key)===p)packSessions.delete(key);throw e;});packSessions.set(key,p);
     if(packSessions.size>16)packSessions.delete(packSessions.keys().next().value);
   }
   return packSessions.get(key);
 }
 export async function createAtlasRaster({manifest,archive_sha256,...binding},registry){
-  return (await packSession(manifest,archive_sha256,registry)).createRaster(binding);
+  return (await atlasPackSession(manifest,registry,archive_sha256)).createRaster(binding);
 }
 export async function resolveAtlasBinding(raw){
-  const pack=await packSession(raw.manifest,raw.archive_sha256);return adoptSpatialProfile(raw,pack.describe(raw.asset));
+  const pack=await atlasPackSession(raw.manifest,undefined,raw.archive_sha256);return adoptSpatialProfile(raw,pack.describe(raw.asset));
 }
 
 export async function createAtlasSprite({height_ft=4,...binding},registry){

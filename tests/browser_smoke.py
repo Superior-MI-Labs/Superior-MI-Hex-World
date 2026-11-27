@@ -59,6 +59,33 @@ with sync_playwright() as p:
       return {closedSame:equal(closedGold,closedGems),openDifferent:!equal(openGold,openGems),preset:equal(openGold,await draw({},gold,'treasure')),invalid,badHash,badInput};
     }""",digest)
     assert all(chest.values()),chest
+    # Recover a transient texture failure through the normal explicit load.
+    attempts=[]
+    def transient_texture(route):
+        attempts.append(route.request.url)
+        if len(attempts)==1:
+            route.abort()
+        else:
+            route.continue_()
+    texture_pattern="**/examples/chest-fixture/textures/chest.png"
+    page.route(texture_pattern,transient_texture)
+    retry_binding={"manifest":"./examples/chest-fixture/manifest.json?retry-test=1","asset":"fixture.chest","preset":"closed"}
+    retry_file={"name":"retry.json","mimeType":"application/json","buffer":json.dumps(retry_binding).encode()}
+    page.locator("#importObjectBinding").set_input_files(retry_file)
+    page.wait_for_function("document.querySelector('#assetStatus').textContent.includes('Texture unavailable')")
+    page.wait_for_function("document.querySelector('#importObjectBinding').value===''")
+    page.locator("#importObjectBinding").set_input_files(retry_file)
+    page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded'")
+    assert len(attempts)==2,attempts
+    page.unroute(texture_pattern,transient_texture)
+    shared=page.evaluate("""async()=>{
+      const {atlasPackSession,resolveAtlasBinding}=await import('/src/assets.mjs');
+      const binding={manifest:'./examples/chest-fixture/manifest.json?retry-test=1',asset:'fixture.chest'};
+      const a=await atlasPackSession(binding.manifest);
+      await resolveAtlasBinding(binding);
+      return a===await atlasPackSession(binding.manifest);
+    }""")
+    assert shared
     catalog={"schema":"smi-public-catalog/1","packs":[{"id":"fixture","zip":"demo/chest-test.zip","archive_sha256":digest}],"assets":[{"id":"fixture.chest","name":"Chest","pack":"fixture","kind":"composition","capabilities":["world-use","compatible-slots"],"license":"CC0-1.0"}]}
     page.route("**/test-catalog.json",lambda route: route.fulfill(json=catalog))
     page.locator("summary",has_text="Browse published Atlas assets").click()

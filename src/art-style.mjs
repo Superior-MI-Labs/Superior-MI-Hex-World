@@ -1,5 +1,5 @@
 // Presentation profile: binds existing Atlas IDs to Hex World visual roles.
-import {openAtlasPack} from "./assets.mjs";
+import {atlasPackSession} from "./assets.mjs";
 import {stableUnit} from "./materials.mjs";
 import {validateWindResponse,windState,SEASONS,validateLighting} from "./environment.mjs";
 import {adoptSpatialProfile} from "./spatial-assets.mjs";
@@ -85,7 +85,7 @@ function validateFamilies(families,manifest){
     return {...structuredClone(f),surface:f.surface??{},variants:vs};
   });
 }
-export async function loadStyle(profile,{baseURL=location.href,openPack=openAtlasPack}={}){
+export async function loadStyle(profile,{baseURL=location.href,openPack=atlasPackSession}={}){
   const s=resolveStyleProfile(profile,baseURL),packs=new Map(),rasters=new Map();
   function session(binding){
     const {manifest,archive_sha256}=binding,key=JSON.stringify([manifest,archive_sha256??null]);
@@ -159,7 +159,7 @@ export function validateStyleVariants(profile,catalog){
   if(catalog.materials){for(const k of Object.keys(profile.detail.materials??{}))assert(own(catalog.materials,k),"Unknown material binding: "+k);for(const f of profile.vegetation.families??[])for(const k of f.materials)assert(own(catalog.materials,k),"Unknown scatter material: "+k);}
   return profile;
 }
-export async function fetchStyle(reference,catalog,{fetcher=fetch,baseURL=location.href,openPack=openAtlasPack}={}){
+export async function fetchStyle(reference,catalog,{fetcher=fetch,baseURL=location.href,openPack=atlasPackSession}={}){
   const url=new URL(reference,baseURL);assert(["http:","https:"].includes(url.protocol)&&!url.username&&!url.password,"Invalid style URL");
   const response=await fetcher(url,{credentials:"omit",redirect:"error"});assert(response.ok,"Style unavailable");
   const raw=await response.text();assert(raw.length<=1e6,"Style exceeds size limit");

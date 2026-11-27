@@ -9,3 +9,7 @@ Import the exported resolved style using the local style file control; geometry/
 
 ## Durable public dependencies
 Atlas must retain content-addressed ZIPs through future catalog publications. Prefer an append-only, same-origin digest-addressed archive URL over a host-specific copy or silent substitution of newer bytes. Atlas owns retention; Hex World owns the existing URL/digest validation. Old saves must either recover exact bytes or report missing dependencies, never substitute newer artwork. The current mutable demo URLs remain a known limitation until the Atlas retention contract is available.
+
+## Shared sessions and clearing evidence
+Styles and objects now reuse the existing bounded URL/digest session cache; per-style raster maps still own their presentation state. Failed image promises are removed, and explicit object qualification retries failed sprites; ordinary render frames do not repeatedly retry a failed download. The deterministic browser suite exercises an intentionally interrupted texture load.
+The live audit assembles a small clearing with ordinary path and grove planners, imports a mixed reviewed edit plan, verifies undo/redo, captures six camera stops and exports the resulting world and resolved style. Its static chest and fixture ground/water remain previews. This is the first reproducible environment integration fixture, not a new scene format or Phase 2 artistic approval. Actual artifact results are required.

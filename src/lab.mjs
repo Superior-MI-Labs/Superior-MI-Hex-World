@@ -58,8 +58,9 @@ function refreshPalette(){const host=$("assetPalette");host.replaceChildren();fo
 $("pinAsset").onclick=()=>{if(!actor)return;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
 $("clearPalette").onclick=()=>{palette.clear();refreshPalette();$("paletteStatus").textContent="Palette cleared";};
 const spriteCache=new Map();
-function requestSprite(binding){
+function requestSprite(binding,retry=false){
   const key=visualKey(binding)+(binding.requireState?":strict-state":"");
+  if(retry&&spriteCache.get(key)?.error)spriteCache.delete(key);
   if(!spriteCache.has(key)){
     const entry={sprite:null,error:null};
     entry.promise=createAtlasSprite(binding).then(async s=>{await s.update(0);entry.sprite=s;return s;}).catch(e=>{entry.error=e.message;return null;});
@@ -248,11 +249,11 @@ async function qualifyBinding(raw){
   const unique=new Map(views.map(v=>[v.asset,v]));
   for(const v of unique.values()){
     const states=[...new Set([v.walk_state,...(v.wind?.states??[]).map(w=>w.state)].filter(Boolean))];
-    const base=requestSprite({...v,...(binding.views&&v.state!==null?{requireState:true}:{})});
+    const base=requestSprite({...v,...(binding.views&&v.state!==null?{requireState:true}:{})},true);
     if(!await base.promise)throw Error(base.error);
-    for(const state of states){const alternate=requestSprite({...v,state,requireState:true});if(!await alternate.promise)throw Error(alternate.error);}
+    for(const state of states){const alternate=requestSprite({...v,state,requireState:true},true);if(!await alternate.promise)throw Error(alternate.error);}
   }
-  const next=await requestSprite(views[0]).promise;if(!next)throw Error("Sprite unavailable");
+  const next=await requestSprite(views[0],true).promise;if(!next)throw Error("Sprite unavailable");
   return {binding,next};
 }
 async function loadBinding(raw){
