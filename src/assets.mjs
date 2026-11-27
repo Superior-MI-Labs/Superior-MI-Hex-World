@@ -117,15 +117,57 @@ export async function openAtlasPack(manifest,registry=new AssetRegistry(),digest
   for(const [key,value] of Object.entries(selection.inputs??{}))assert(Object.hasOwn(root.inputs??{},key)&&slots.accepts(root.inputs[key],value),"Invalid composition input: "+key);
   const values={...resolved.inputs,...selection.inputs};
   const renderer=globalThis.VisualAtlasRenderer.create({getAsset:id=>map.get(id),getImage,slots:globalThis.VisualAtlasSlots,timeline:globalThis.VisualAtlasTimeline,visualCore:globalThis.VisualAtlasVisualCore});
-  const [w,h]=renderer.sizeFor(asset,new Set(),values,selection.preset,selection.slots);assert([w,h].every(v=>Number.isInteger(v)&&v>0&&v<=4096),"World sprite raster exceeds limit");const canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
+  const [w,h]=renderer.sizeFor(asset,new Set(),values,selection.preset,selection.slots);assert([w,h].every(v=>Number.isInteger(v)&&v>0&&v<=4096),"World sprite raster exceeds limit");
+  const selected=root.kind==="state_set"?map.get(root.states[state??root.default_state]):root;
+  // Only direct cyclic sequences of regions can be safely phase-shifted.
+  // One-shot sequences, compositions and nested timelines retain their normal clock.
+  const phasePeriod=cyclicRegionPeriod(selected,map);
+  function makeRaster(){
+  const canvas=document.createElement("canvas"),back=document.createElement("canvas");canvas.width=back.width=w;canvas.height=back.height=h;const ctx=back.getContext("2d");
   let revision=0,busy=false,last=-Infinity,pivot=[.5,1];
-  return {image:canvas,pixelWidth:w,pixelHeight:h,animated:root.kind!=="region",contract:structuredClone({kind:root.kind,inputs:root.inputs??{},slots:root.slots??{},presets:root.presets??{},default_preset:root.default_preset,behavior:root.behavior}),get pivot(){return pivot;},get revision(){return revision;},
+  return {image:canvas,pixelWidth:w,pixelHeight:h,animated:root.kind!=="region",phasePeriod,...(phasePeriod?{fork:makeRaster}:{}),contract:structuredClone({kind:root.kind,inputs:root.inputs??{},slots:root.slots??{},presets:root.presets??{},default_preset:root.default_preset,behavior:root.behavior}),get pivot(){return pivot;},get revision(){return revision;},
     async update(time){
-      if(busy||(root.kind==="region"&&revision>0)||time-last<80)return false;busy=true;
+      if(busy||(root.kind==="region"&&revision>0)||(time>=last&&time-last<80))return false;busy=true;
       try{ctx.clearRect(0,0,w,h);await renderer.drawAsset(asset,ctx,0,0,w,h,time,values,state,new Set(),selection.slots,selection.preset);pivot=renderer.pivotFor(asset,time,state)??[.5,1];const out=canvas.getContext("2d");out.clearRect(0,0,w,h);out.drawImage(back,0,0);revision++;last=time;return true;}finally{busy=false;}
     }};
+  }
+  return makeRaster();
   }};
 }
+// Canonical Atlas frame timing: authored holds plus default-rate frames.
+// No change to the vendor renderer or asset schema.
+export function cyclicRegionPeriod(sequence,assets){
+  if(sequence?.kind!=="sequence"||!["loop","pingpong"].includes(sequence.playback)||sequence.frames.length<2||!sequence.frames.every(f=>assets.get(f.asset)?.kind==="region"))return 0;
+  let holds=0,defaults=0;
+  for(const f of sequence.frames){if(f.duration_ms)holds+=f.duration_ms;else defaults++;}
+  const total=(holds+defaults*1000/sequence.default_fps)*(sequence.playback==="pingpong"?2:1);
+  return Number.isFinite(total)&&total>0&&total<=600000?total:0;
+}
+// Four shared deterministic cohorts, not one canvas per world instance.
+// The auxiliary CPU canvas allocation is bounded; over-budget sprites
+// fall back to the normal shared phase. Clearing changes no world records.
+export class AnimationPhasePool{
+  #groups=new Map();#count=0;#bytes=0;
+  constructor({maxEntries=24,maxBytes=32*1024*1024}={}){
+    assert(Number.isSafeInteger(maxEntries)&&maxEntries>=0&&Number.isSafeInteger(maxBytes)&&maxBytes>=0,"Invalid phase budget");
+    this.maxEntries=maxEntries;this.maxBytes=maxBytes;
+  }
+  select(base,unit){
+    const cohort=Math.max(0,Math.min(3,Math.floor(unit*4)));
+    if(!cohort||!base.phasePeriod||!base.fork)return {raster:base,offset:0};
+    const group=this.#groups.get(base),existing=group?.get(cohort);
+    if(existing)return existing;
+    const bytes=base.pixelWidth*base.pixelHeight*8;
+    if(this.#count>=this.maxEntries||this.#bytes+bytes>this.maxBytes)return {raster:base,offset:0};
+    const next={raster:base.fork(),offset:base.phasePeriod*cohort/4};
+    if(!group)this.#groups.set(base,new Map());
+    this.#groups.get(base).set(cohort,next);this.#count++;this.#bytes+=bytes;
+    return next;
+  }
+  clear(){this.#groups.clear();this.#count=0;this.#bytes=0;}
+  diagnostics(){return {animation_phase_variants:this.#count,animation_phase_canvas_bytes:this.#bytes};}
+}
+
 // Share decoded sheets and archive resolution across object variants.
 // Failed sessions are retryable; bound the session cache, not world records.
 const packSessions=new Map();

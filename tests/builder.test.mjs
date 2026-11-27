@@ -1,5 +1,5 @@
 import test from "node:test";import assert from "node:assert/strict";
-import {World} from "../src/core.mjs";import {uniformShape} from "../src/geometry.mjs";import {CellEditHistory,applyEditPlan} from "../src/editor.mjs";import {pathFootprint,planPath,planGrade,planGrove,planWoodlandClearing} from "../src/builder.mjs";
+import {World} from "../src/core.mjs";import {uniformShape} from "../src/geometry.mjs";import {CellEditHistory,applyEditPlan} from "../src/editor.mjs";import {pathFootprint,planPath,planGrade,planGrove,planWoodlandClearing,planWeatherExposure} from "../src/builder.mjs";
 const cfg={schema:"smi-hex-world/1",id:"builder",grid:{horizontal_ft:5,vertical_ft:5,geometry_subdivisions:2,chunk_size:[16,16,16]},simulation:{mode:"frozen",rate:1}};
 const solid={material:"soil",shape:uniformShape(2)},a=[-1,0,0],b=[0,0,0],c=[1,0,0];
 function world(){const w=new World(cfg);w.defineChunk(-1,0,0,solid);w.defineChunk(0,0,0,solid);return w;}
@@ -19,4 +19,20 @@ test("woodland clearing is one deterministic reversible plan with fixed water an
  const after=w.snapshot();h.undo();assert.equal(w.entityCount,0);for(const e of plan.edits)assert.deepEqual(w.get(...e.address),e.expected);h.redo();assert.deepEqual(w.snapshot(),after);
  assert.throws(()=>planWoodlandClearing(w,[0,0,0],opts),/free/);
  assert.throws(()=>planWoodlandClearing(w,[100,100,0],opts),/Unknown/);
+});
+
+test("weather exposure uses local climate, is reviewed, preserves fixed water and never advances the clock",()=>{
+ const w=world(),rain={season:"summer",temperature_c:15,precipitation:"rain",intensity:1};
+ w.setEnvironment({climate:rain,zones:[{id:"snow",center:[0,0],radius:0,levels:[0,0],climate:{season:"winter",temperature_c:-5,precipitation:"snow",intensity:1}}]});
+ w.set(...a,{...solid,components:{surface:{burn:5},water:{fill:.4,fixed:true}}});
+ const before=w.snapshot(),plan=planWeatherExposure(w,[a,b],{seconds:3600});
+ assert.deepEqual(w.snapshot(),before);
+ const h=new CellEditHistory(w);applyEditPlan(w,h,plan);
+ assert.ok(w.get(...a).components.surface.moisture>.9);
+ assert.equal(w.get(...a).components.surface.burn,0);
+ assert.equal(w.get(...a).components.water.fixed,true);
+ assert.ok(w.get(...b).components.surface.snow>.95);
+ assert.deepEqual(w.clockState,before.clock);
+ h.undo();assert.deepEqual(w.get(...a),plan.edits[0].expected);
+ assert.throws(()=>planWeatherExposure(w,[[100,0,0]]),/known solid/);
 });

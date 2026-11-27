@@ -299,6 +299,7 @@ with sync_playwright() as p:
     page.locator("#windSpeed").fill("20")
     page.locator("#applyWind").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).wind_bent_sprites>0 && JSON.parse(document.querySelector('#status').textContent).wind_state_sprites>0")
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).performance.animation_phase_variants>0")
     page.locator("#shelterWind").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).selected_wind.velocity_ft_s[0]===0")
     page.locator("#windVisual").uncheck()

@@ -4,10 +4,10 @@ import {planVertexEdit,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
 import {buildWaterSurfaces,stepWater,waterTicks} from "./water.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,selectionBrush,mergeSelection,CellEditHistory,makeEditPlan,inspectEditPlan,applyEditPlan,cellShape,cellMaterial,cellWater,hexStroke,exportBuildContext} from "./editor.mjs";
-import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing} from "./builder.mjs";
+import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing,planWeatherExposure} from "./builder.mjs";
 import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
-import {createAtlasSprite,createAtlasMask,resolveAtlasBinding} from "./assets.mjs";
+import {createAtlasSprite,createAtlasMask,resolveAtlasBinding,AnimationPhasePool} from "./assets.mjs";
 import {ATLAS_CATALOG,fetchCatalog,searchCatalog,catalogBrowseOptions} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
 import {fetchStyle,loadStyle,validateStyle,validateStyleVariants,woodlandPreviewStyle,vegetationSamples,vegetationRaster,vegetationWind,scatterRaster} from "./art-style.mjs";
@@ -22,7 +22,7 @@ import {buildScatterPlan,promoteSample} from "./scatter.mjs";
 import {CALM,validateWater,DEFAULT_LIGHTING,validateLighting,validateLightSource,validateWindResponse,windAt,climateAt,sampleWind,windState,windOffset,composeBend} from "./environment.mjs";
 import {validateInteractions,interactionTags,cellTarget,entityTarget,contactResponse,bendBillboard} from "./interactions.mjs";
 import {validatePrefab,planPrefab,capturePrefab} from "./prefabs.mjs";
-import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit} from "./materials.mjs";
+import {validateMaterials,surface,ignite,advanceSurface,withSurface,stableUnit,surfaceSubmerged} from "./materials.mjs";
 const $=id=>document.getElementById(id),canvas=$("scene"),ctx=canvas.getContext("2d");
 const gpu=createRenderer($("terrain"));
 const base=await fetch("./examples/world.json").then(r=>{if(!r.ok)throw Error("World unavailable");return r.json()});
@@ -78,7 +78,8 @@ $("importPalette").onchange=async()=>{
     refreshPalette();$("paletteStatus").textContent=palette.size+" imported assets";
   }catch(e){if(request===paletteRequest)$("paletteStatus").textContent="Previous palette retained: "+e.message;}
 };
-const spriteCache=new Map();
+const spriteCache=new Map(),phasePool=new AnimationPhasePool();let phaseFailures=new WeakSet();
+function clearAnimationPhases(){phasePool.clear();phaseFailures=new WeakSet();}
 function requestSprite(binding,retry=false){
   const key=visualKey(binding)+(binding.requireState?":strict-state":"");
   if(retry&&spriteCache.get(key)?.error)spriteCache.delete(key);
@@ -376,7 +377,7 @@ function selectFace(key){faceSelect.value=key;sync();}
 
 const get=()=>world.get(...selected).shape;
 function reset(){
-  stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;
+  clearAnimationPhases();stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;
   const n=base.grid.geometry_subdivisions;grid={...base.grid};
   world=worldMode==="settlement"?buildSettlement(base,prefabCatalog,demoVisual):new World(worldMode==="exploration"?explorationConfig(base):base);
   history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);playback.clear();showEvents([]);selected=worldMode==="settlement"?[...settlementStart]:[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";clock=new Clock(base.simulation);$("mode").value=base.simulation.mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";
@@ -415,11 +416,11 @@ $("applyWater").onclick=()=>updateWater();$("drainWater").onclick=()=>updateWate
 function modifySurface(fn){editSelected(cell=>hasVolume(cell.shape)?withSurface(cell,fn(surface(cell.components?.surface),cell)):cell);}
 for(const k of ["growth","health","moisture","leaves","snow","scorch"]){$(k).oninput=()=>modifySurface(s=>({...s,[k]:Number($(k).value)}));bindGesture($(k));}
 $("material").onchange=()=>{const material=$("material").value;editSelected(cell=>cellMaterial(cell,material,catalog.materials[material].vegetation),"Material edit");};
-$("reactive").onclick=()=>modifySurface((s,c)=>ignite(catalog,c));
+$("reactive").onclick=()=>modifySurface((s,c)=>ignite(catalog,c,grid.geometry_subdivisions));
 $("extinguish").onclick=()=>{const c=world.get(...selected);if(hasVolume(c.shape))modifySurface(s=>({...s,burn:0}));for(const e of world.effects())if(e.address.every((v,i)=>v===selected[i]))world.removeEffect(e.id);};
 function simulate(seconds){if(seconds<=0)return;let waterChanged=false;
   if(world.environment.water_simulation)try{for(let i=0,n=waterTicks(clock.simulation-seconds,clock.simulation);i<n;i++){const result=stepWater(world);waterChanged||=result.edits.length>0;const {edits,...report}=result;waterReport=report;$("waterSimStatus").textContent=report.unsupported?report.unsupported+" unsupported wet cells held static":"Water transferred: "+report.moved_ft3.toFixed(3)+" ft³";}}catch(e){world.setEnvironment({...world.environment,water_simulation:false});$("simulateWater").checked=false;$("waterSimStatus").textContent=e.message+"; simulation disabled";}
-  const edits=[];for(const address of world.burningAddresses()){const c=world.get(...address),s=c.components?.surface;if(s?.burn>0)edits.push({address,value:withSurface(c,advanceSurface(s,seconds,catalog.vegetation.burn_seconds))});}if(edits.length)world.apply(edits);if(edits.length||waterChanged){dirty=true;sync();}}
+  const edits=[];for(const address of world.burningAddresses()){const c=world.get(...address),s=c.components?.surface;if(s?.burn>0)edits.push({address,value:withSurface(c,surfaceSubmerged(c,grid.geometry_subdivisions)?{...s,burn:0}:advanceSurface(s,seconds,catalog.vegetation.burn_seconds))});}if(edits.length)world.apply(edits);if(edits.length||waterChanged){dirty=true;sync();}}
 
 reset();
 $("level").onchange=()=>{const z=Number($("level").value);if(!displayedAddress([0,0,z])){$("cutaway").value="all";dirty=true;}selected=[selected[0],selected[1],z];selection=[[...selected]];sync();};
@@ -430,7 +431,7 @@ async function loadArt(reference,prepare=()=>fetchStyle(reference,catalog)){
   const request=++artRequest;$("artStatus").textContent="Loading art profile";
   try{const next=await prepare();
     if(request!==artRequest)return;
-    gpu.setTerrainStyle(next);art=next;scatterDirty=true;syncLighting();
+    gpu.setTerrainStyle(next);clearAnimationPhases();art=next;scatterDirty=true;syncLighting();
     $("artStatus").textContent=next.profile.id==="fantasy-meadow-fixture"?"Atlas meadow fixture loaded":"Atlas art loaded: "+next.profile.id;
     $("scatterStatus").textContent=next.scatter.size+" decorative families"+(next.scatterWarnings.length?"; "+next.scatterWarnings.join("; "):"");
   }catch(e){if(request===artRequest)$("artStatus").textContent=(art?"Previous style retained: ":"Procedural fallback: ")+e.message;}
@@ -481,7 +482,7 @@ $("load").onchange=async()=>{try{
   const next=World.restore(JSON.parse(await file.text())),g=next.config.grid,cfg=next.config,generated=cfg.generation?.profile===EXPLORATION_PROFILE,settlement=cfg.scene===SETTLEMENT;
   if(g.horizontal_ft!==base.grid.horizontal_ft||g.vertical_ft!==base.grid.vertical_ft||g.geometry_subdivisions!==2||g.chunk_size.some((n,i)=>n!==base.grid.chunk_size[i])||(!generated&&(cfg.generation||!((settlement?settlementDomain:islandDomain).every(a=>next.get(...a))))))throw Error("Unsupported laboratory world profile");
   if(generated){if(typeof cfg.generation.seed!=="string"||!cfg.generation.seed)throw Error("Invalid generation seed");loadViewport(next,viewportBounds({yaw:0,scale:24,width:canvas.width,height:canvas.height,panX:0,panY:50},g,undefined,120));}
-  world=next;stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
+  world=next;clearAnimationPhases();stagedPlan=null;drag=null;gesture=null;waypoints=[];$("pathStatus").textContent="No waypoints";$("applyEditPlan").disabled=true;history=new CellEditHistory(world);meshCache=new TerrainFaceCache(world);grid=g;worldMode=generated?"exploration":settlement?"settlement":"island";playback.clear();showEvents([]);$("cutaway").value="all";cutCenter=null;$("cutStatus").textContent="Global cutaway";selected=[0,0,0];selection=[[...selected]];turn=null;renderYaw=yaw=0;keys.clear();faceSelect.value="upper";dirty=true;clock=next.clockState?Clock.restore(next.clockState):new Clock(cfg.simulation);$("mode").value=clock.snapshot().mode;capture.clear();captureAnchor=null;regionKey="";cameraKey="";
   yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;$("worldMode").value=worldMode;
   if(generated)refreshRegion(true);else{ground=settlement?settlementGround:island;domain=settlement?settlementDomain:islandDomain;activeChunks=0;}
   syncWind();syncClimate();syncLighting();syncWaterMode();sync();$("message").textContent="World imported";
@@ -561,6 +562,7 @@ function procedure(fn){try{fn();}catch(e){planRequest++;stagedPlan=null;$("apply
 $("addWaypoint").onclick=()=>{if(waypoints.length>=32){$("pathStatus").textContent="32 waypoint limit";return;}waypoints.push([...selected]);$("pathStatus").textContent=waypoints.map(a=>a.join(",")).join(" → ");};
 $("clearWaypoints").onclick=()=>{waypoints=[];$("pathStatus").textContent="No waypoints";};
 $("previewGrade").onclick=()=>procedure(()=>stageBuilder(planGrade(world,selection,builderSettings())));
+$("previewExposure").onclick=()=>procedure(()=>stageBuilder(planWeatherExposure(world,selection,{seconds:Number($("exposureSeconds").value)}),"; selected surfaces only; no clock advance"));
 $("previewPath").onclick=()=>procedure(()=>{
   const kind=$("pathKind").value,plan=planPath(world,waypoints,{...builderSettings(),kind,radius:Number($("pathRadius").value),fill:Number($("paintWater").value),speed:Number($("riverSpeed").value)});
   if(plan.edits.some(e=>!displayedAddress(e.address)))throw Error("Path crosses hidden cells");
@@ -619,7 +621,13 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     if(Math.hypot(...offset)>1e-8)windBent++;
     return composeBend(points,contact,offset,height);
   }
-  function animateRaster(r){if(r.animated&&!updated.has(r)){updated.add(r);r.update(clock.visual*1000).catch(e=>{$("artStatus").textContent="Animation error: "+e.message;});}}
+  function animateRaster(base,identity,onError=e=>{$("artStatus").textContent="Animation error: "+e.message;}){
+    if(!base.animated)return base;
+    const phase=$("independentPhases").checked&&base.phasePeriod?phasePool.select(base,stableUnit(seed,identity,"animation-phase")):{raster:base,offset:0};
+    const update=(r,offset)=>{if(!updated.has(r)&&!phaseFailures.has(r)){updated.add(r);r.update(clock.visual*1000+offset).catch(e=>{if(r===base)onError(e);else phaseFailures.add(r);});}};
+    if(phase.raster!==base&&!phaseFailures.has(phase.raster)){update(phase.raster,phase.offset);if(phase.raster.revision>0)return phase.raster;}
+    update(base,0);return base;
+  }
 
   function cellContact(address){const k=address.join(",");if(!contactByCell.has(k))contactByCell.set(k,contactResponse(interactions,cellTarget(address,world.get(...address))));return contactByCell.get(k);}
 
@@ -638,9 +646,9 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   if(styled&&$("scatter").checked)for(const sample of scatterPlan){
     if(scale<=sample.lod_px||!displayedAddress(sample.address))continue;
     const wind=windFor(sample.address),season=climateFor(sample.address).season,k=JSON.stringify([sample.family,sample.variant,sample.orientation,season,wind.velocity_ft_s]);if(!scatterVisualCache.has(k))scatterVisualCache.set(k,scatterRaster(art,{...sample,scale:1},wind,season,yaw));const v=scatterVisualCache.get(k);if(!v)continue;
-    const {r}=v,height=v.height*sample.scale,p=sample.point,w=height*r.pixelWidth/r.pixelHeight,screen=view(p),margin=scale*Math.max(w,height)*2;
+    const height=v.height*sample.scale,p=sample.point,w=height*v.r.pixelWidth/v.r.pixelHeight,screen=view(p),margin=scale*Math.max(w,height)*2;
     if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
-    animateRaster(r);
+    const r=animateRaster(v.r,[sample.address,sample.key]);
     sprites.push({image:r.image,revision:r.revision,hardAlpha:quality==="fast"||quality==="balanced"&&height<=3,points:flex(billboard(p,renderYaw,w,height,r.pivot,alignment),p,height,sample.contact&&contacts.length?cellContact(sample.address):null,null,wind,v.wind)});scatterInstances++;
     if(sample.shadow&&(quality!=="fast"||height>3))shadowObjects.push({address:sample.address,point:p,height,radius:Math.min(grid.horizontal_ft/2,w*.45),opacity:.35});
   }
@@ -648,7 +656,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     if(f.kind!=="top"||f.vegetation<=0)continue;
     if(styled){
       let cached=grassCache.get(f);if(!cached||cached.art!==art||cached.scale!==scale){cached={art,scale,samples:vegetationSamples(f,seed,art.profile,scale)};grassCache.set(f,cached);}for(const sample of cached.samples){
-        const wind=windFor(f.address),season=climateFor(f.address).season,k=JSON.stringify([sample.variant,season,wind.velocity_ft_s]);if(!vegetationVisualCache.has(k))vegetationVisualCache.set(k,vegetationRaster(art,sample.variant,wind,season));const r=vegetationVisualCache.get(k);if(!r)continue;animateRaster(r);const seasonal=art.seasonalRasters.get(season)?.get(sample.variant);if(seasonal)seasonalFoliage++;if(r!==(seasonal??art.vegetation.get(sample.variant)))animatedFoliage++;
+        const wind=windFor(f.address),season=climateFor(f.address).season,k=JSON.stringify([sample.variant,season,wind.velocity_ft_s]);if(!vegetationVisualCache.has(k))vegetationVisualCache.set(k,vegetationRaster(art,sample.variant,wind,season));const baseRaster=vegetationVisualCache.get(k);if(!baseRaster)continue;const r=animateRaster(baseRaster,sample.point);const seasonal=art.seasonalRasters.get(season)?.get(sample.variant);if(seasonal)seasonalFoliage++;if(baseRaster!==(seasonal??art.vegetation.get(sample.variant)))animatedFoliage++;
         sprites.push({image:r.image,revision:r.revision,hardAlpha:quality!=="full",points:flex(billboard(sample.point,renderYaw,sample.height*r.pixelWidth/r.pixelHeight,sample.height,r.pivot,alignment),sample.point,sample.height,contacts.length?cellContact(f.address):null,null,wind,vegetationWind(art.profile,sample.variant,season))});
       }
     }else if(stableUnit(seed,f.address,"tuft"+f.triangle)<=f.vegetation){
@@ -664,10 +672,10 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     if(!displayedAddress(address))continue;const screen=view(p);
     const margin=scale*e.visual.height_ft*4;if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
     const viewBinding=directionalBinding(e.visual,yaw,e.orientation_steps??0),wind=windFor(address),state=windState(viewBinding.wind,wind,viewBinding.state),binding=walking&&viewBinding.walk_state?{...viewBinding,state:viewBinding.walk_state,requireState:true}:state===viewBinding.state?viewBinding:{...viewBinding,state,requireState:true};
-    const entry=requestSprite(binding),s=entry.sprite??requestSprite(viewBinding).sprite;
+    const preferred=requestSprite(binding),entry=preferred.sprite?preferred:requestSprite(viewBinding),s=entry.sprite;
     if(!s){unresolvedObjects++;continue;}
-    s.update(clock.visual*1000).catch(err=>{entry.error=err.message;entry.sprite=null;});
-    sprites.push({image:s.image,revision:s.revision,emissive:e.light?.emissive??0,points:flex(billboard(p,renderYaw,s.width,s.height,s.pivot,alignment),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
+    const r=animateRaster(s,[e.id],err=>{entry.error=err.message;entry.sprite=null;});
+    sprites.push({image:r.image,revision:r.revision,emissive:e.light?.emissive??0,points:flex(billboard(p,renderYaw,s.width,s.height,r.pivot,alignment),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
     if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,height:s.height,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
   }
   const spriteMS=performance.now()-spritesStart,shadowStart=performance.now(),light=field.lighting??(styled?art.profile.lighting:null),shadowKey=JSON.stringify([light,$("contactShadows").checked,$("directionalShadows").checked,shadowObjects]);
@@ -726,7 +734,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   }
   const timing={frame_ms:performance.now()-started,frame_interval_ms:interval,terrain_ms:terrainMS,sprites_ms:spriteMS,shadow_ms:shadowMS,render_ms:renderMS};
   profileSamples++;if(interval>0)profileIntervals.push(interval);for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
-  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;profileIntervals.sort((a,b)=>a-b);profileFrame.interval_p95_ms=Math.round((profileIntervals[Math.max(0,Math.ceil(profileIntervals.length*.95)-1)]??0)*10)/10;profileFrame.interval_max_ms=Math.round((profileIntervals.at(-1)??0)*10)/10;profileFrame.samples=profileSamples;Object.assign(profileFrame,gpu.diagnostics());profileSamples=0;profileSum={};profileIntervals=[];$("performanceStatus").textContent=JSON.stringify(profileFrame);}
+  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;profileIntervals.sort((a,b)=>a-b);profileFrame.interval_p95_ms=Math.round((profileIntervals[Math.max(0,Math.ceil(profileIntervals.length*.95)-1)]??0)*10)/10;profileFrame.interval_max_ms=Math.round((profileIntervals.at(-1)??0)*10)/10;profileFrame.samples=profileSamples;Object.assign(profileFrame,gpu.diagnostics(),phasePool.diagnostics());profileSamples=0;profileSum={};profileIntervals=[];$("performanceStatus").textContent=JSON.stringify(profileFrame);}
   $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

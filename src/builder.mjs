@@ -2,7 +2,8 @@
 import {makeEditPlan,hexStroke,cellShape,cellMaterial,cellWater} from "./editor.mjs";
 import {uniformShape,hasVolume} from "./geometry.mjs";
 import {validAddress,validateEntity,anchorHeight,spriteBinding} from "./entities.mjs";
-import {stableUnit,surface,withSurface} from "./materials.mjs";
+import {stableUnit,surface,withSurface,weatherSurface} from "./materials.mjs";
+import {climateAt} from "./environment.mjs";
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);},key=a=>a.join(",");
 export function entityOccupancy(world){
   const map=new Map();for(const e of world.entities()){const k=key(e.address),list=map.get(k)??[];list.push(e);map.set(k,list);}return map;
@@ -98,4 +99,17 @@ export function planWoodlandClearing(world,anchor,{tree,chest=null}={}){
     entities.push(...placement.entities);
   }
   return makeEditPlan(world,[...road.edits,...creek.edits],"Woodland acceptance clearing",entities);
+}
+
+// Exposure is an explicit reviewed edit of user-designated surfaces. It does
+// not infer roof coverage, advance time, generate unknown cells or change water.
+export function planWeatherExposure(world,addresses,{seconds=600}={}){
+  assert(Number.isFinite(seconds)&&seconds>0&&seconds<=86400,"Invalid exposure duration");
+  const field=world.environment,n=world.config.grid.geometry_subdivisions;
+  const edits=addressesOf(addresses).map(address=>{
+    const cell=world.get(...address);
+    assert(cell&&hasVolume(cell.shape),"Weather exposure needs known solid terrain");
+    return {address,value:withSurface(cell,weatherSurface(cell,climateAt(field,address),seconds,n))};
+  });
+  return makeEditPlan(world,edits,"Apply authored weather exposure");
 }
