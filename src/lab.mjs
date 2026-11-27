@@ -7,6 +7,7 @@ import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,s
 import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing,planWeatherExposure} from "./builder.mjs";
 import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys} from "./camera.mjs";
 import {createRenderer} from "./gpu.mjs";
+import {FrameSamples} from "./profiling.mjs";
 import {createAtlasSprite,createAtlasMask,resolveAtlasBinding,AnimationPhasePool} from "./assets.mjs";
 import {ATLAS_CATALOG,fetchCatalog,searchCatalog,catalogBrowseOptions} from "./catalog.mjs";
 import {appearanceOptions,dispatchAppearance,collisionSelection} from "./asset-interactions.mjs";
@@ -611,7 +612,38 @@ window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(k==="escape
 window.addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
 window.addEventListener("blur",()=>keys.clear());
 document.addEventListener("focusin",e=>{if(editableTarget(e.target))keys.clear();});
-let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSum={},profileSamples=0,profileIntervals=[];
+let profileFrame={frame_ms:0,frame_interval_ms:0,terrain_ms:0,sprites_ms:0,shadow_ms:0,render_ms:0},profileAt=0,profileSamples=new FrameSamples();
+let benchmark=null,benchmarkReport=null,lastRenderCameraKey=null;
+const benchmarkFlags=["artStyle","scatter","windVisual","independentPhases","weatherVisual","pointLights","pointOcclusion","ambientOcclusion","contactShadows","directionalShadows","softSprites","showWater","wire","pattern","transitions","transitionDebug"];
+function benchmarkContext(){
+  return {world_id:world.config.id,world_mode:worldMode,geometry_revision:world.geometryRevision,camera:camera(),selection:structuredClone(selection),quality:$("renderQuality").value,art_style:art&&$("artStyle").checked?art.profile.id:null,environment:world.environment,clock_mode:clock.snapshot().mode,flags:Object.fromEntries(benchmarkFlags.map(id=>[id,$(id).checked])),device_pixel_ratio:devicePixelRatio,viewport:[innerWidth,innerHeight],renderer:gpu.diagnostics(),resident_chunks:world.chunkCount,active_cells:domain.length,world_objects:world.entityCount,visible_triangles:visibleCache?.faces.length??0,scatter_candidates:scatterPlan.length};
+}
+function finishBenchmark(cancelled=false){
+  if(!benchmark)return;const run=benchmark;
+  if(!cancelled&&run.samples.count){
+    benchmarkReport={schema:"smi-hex-performance/1",scenario:run.label,started_at:run.started_at,user_agent:navigator.userAgent,warmup_ms:1500,requested_duration_ms:10000,elapsed_ms:Math.round(run.last-run.first),start:run.start,end:benchmarkContext(),metrics:run.samples.summary(),notes:"CPU frame/stage timings exclude final status serialization; GPU timer samples are optional asynchronous completed draws, not compositor timing. No automatic performance guarantee."};
+    $("benchmarkStatus").textContent="Captured "+benchmarkReport.metrics.samples+" frames · "+benchmarkReport.metrics.fps+" FPS · p95 "+benchmarkReport.metrics.interval_p95_ms+" ms";
+    $("exportBenchmark").disabled=false;
+  }else $("benchmarkStatus").textContent="Capture cancelled — keep the tab visible and try again";
+  benchmark=null;gpu.setTimingEnabled(false);$("startBenchmark").disabled=false;$("cancelBenchmark").disabled=true;
+}
+$("startBenchmark").onclick=()=>{
+  if(benchmark||document.hidden)return;
+  benchmark={label:$("benchmarkScenario").value,started_at:new Date().toISOString(),ready:performance.now()+1500,first:null,last:null,start:null,samples:new FrameSamples()};
+  $("startBenchmark").disabled=true;$("cancelBenchmark").disabled=false;$("benchmarkStatus").textContent="Warming up (1.5 seconds)";
+};
+$("cancelBenchmark").onclick=()=>finishBenchmark(true);
+$("exportBenchmark").onclick=()=>{if(benchmarkReport)downloadJSON(benchmarkReport,"hex-world-performance.json");};
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&benchmark)finishBenchmark(true);});
+function captureFrame(ms,timing,diagnostics,gpuSamples){
+  if(!benchmark||ms<benchmark.ready)return;
+  if(benchmark.first===null){
+    benchmark.first=benchmark.last=ms;benchmark.start=benchmarkContext();gpu.setTimingEnabled(true);
+    $("benchmarkStatus").textContent="Recording 10 seconds — "+benchmark.label;return;
+  }
+  benchmark.last=ms;benchmark.samples.add(timing,diagnostics,gpuSamples);
+  if(ms-benchmark.first>=10000||benchmark.samples.count>=benchmark.samples.limit)finishBenchmark();
+}
 
 function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,interval/1000);last=ms;const started=performance.now(),motion=cameraKeys(keys,dt,scale);panX+=motion.dx;panY+=motion.dy;if(motion.scale!==scale){scale=motion.scale;$("zoom").value=scale;}if(turn){const t=sampleTurn(turn,ms);renderYaw=t.done?yaw:t.yaw;if(t.done)turn=null;}clock.animate(dt);const before=clock.simulation;clock.advance(dt,"realtime");simulate(clock.simulation-before);const terrainStart=performance.now();refreshRegion();ctx.clearRect(0,0,900,450);
   if(dirty){visibleCache=null;grassCache=new WeakMap();shadowCache=null;wireCells=new Map();scatterDirty=true;const level=cutLevel(),renderWorld=level===null?world:cutawayView(world,level,cutOptions());faces=decorateTerrain(renderWorld,level===null?domain:domain.filter(displayedAddress),catalog,{enabled:$("transitions").checked,...(level===null?{cache:meshCache}:{})});if($("ambientOcclusion").checked)faces=terrainOcclusion(world,faces);waterSurfaces=buildWaterSurfaces(renderWorld,level===null?domain:domain.filter(displayedAddress),{sides:true});dirty=false;for(const [id,motion] of playback)if(motion.stamp!==routeGeometryStamp(world,motion.path,movement))playback.delete(id);contactByCell=new Map();}
@@ -708,8 +740,8 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const pointShadow=$("pointOcclusion").checked&&cutLevel()===null&&local.lights.length?pointShadowCache.prepare(world,local.lights):{plan:null,diagnostics:{lights:0,rays:0,unknown:0,budget:0,omitted:local.lights.length,cache_hit:false}};
   const walls=[];for(const [a,b] of selectionEdges(world,selection.filter(displayedAddress),grid)){const up=p=>[p[0],p[1],p[2]+grid.vertical_ft*.18],lo=p=>[p[0],p[1],p[2]+.015];walls.push({points:[lo(a),lo(b),up(b)],fade:[0,0,1]},{points:[lo(a),up(b),up(a)],fade:[0,1,1]});}
   const shadowMS=performance.now()-shadowStart,renderStart=performance.now();
-  gpu.render(visible,view,{projectionKey:ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,pointShadow:pointShadow.plan,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
-  const renderMS=performance.now()-renderStart;
+  gpu.render(visible,view,{projectionKey:ckey,cacheStaticTerrain:lastRenderCameraKey===null||lastRenderCameraKey===ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,pointShadow:pointShadow.plan,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
+  lastRenderCameraKey=ckey;const renderMS=performance.now()-renderStart;
   if($("wire").checked){
     if(!wireCells.has(selected[2]))wireCells.set(selected[2],domain.filter(a=>a[2]===selected[2]&&!hasVolume(world.get(...a).shape)));
     const emptyCorners=vertices(uniformShape(0),grid).upper.slice(0,6);
@@ -756,8 +788,9 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
   const timing={frame_ms:performance.now()-started,frame_interval_ms:interval,terrain_ms:terrainMS,sprites_ms:spriteMS,shadow_ms:shadowMS,render_ms:renderMS};
-  profileSamples++;if(interval>0)profileIntervals.push(interval);for(const [k,v] of Object.entries(timing))profileSum[k]=(profileSum[k]??0)+v;
-  if(ms-profileAt>=500){profileAt=ms;profileFrame=Object.fromEntries(Object.entries(profileSum).map(([k,v])=>[k,Math.round(v/profileSamples*10)/10]));profileFrame.fps=profileFrame.frame_interval_ms>0?Math.round(1000/profileFrame.frame_interval_ms):0;profileIntervals.sort((a,b)=>a-b);profileFrame.interval_p95_ms=Math.round((profileIntervals[Math.max(0,Math.ceil(profileIntervals.length*.95)-1)]??0)*10)/10;profileFrame.interval_max_ms=Math.round((profileIntervals.at(-1)??0)*10)/10;profileFrame.samples=profileSamples;Object.assign(profileFrame,gpu.diagnostics(),phasePool.diagnostics());profileSamples=0;profileSum={};profileIntervals=[];$("performanceStatus").textContent=JSON.stringify(profileFrame);}
+  const gpuStats=gpu.diagnostics(),gpuSamples=gpu.takeTimingSamples();
+  profileSamples.add(timing,gpuStats,gpuSamples);captureFrame(ms,timing,gpuStats,gpuSamples);
+  if(ms-profileAt>=500){profileAt=ms;profileFrame={...profileSamples.summary(),...gpuStats,...phasePool.diagnostics()};profileSamples=new FrameSamples();$("performanceStatus").textContent=JSON.stringify(profileFrame);}
   $("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,precipitation_instances:weatherSprites.length,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,point_shadow:pointShadow.diagnostics,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,emissive_mask_instances:maskedObjects,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

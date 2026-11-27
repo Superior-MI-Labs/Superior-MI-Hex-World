@@ -94,3 +94,6 @@ v0.35: default front/back hex-edge camera alignment with original-view toggle.
 
 
 See [the Hex World × Visual Atlas integration roadmap](docs/ROADMAP.md) for the next production milestones and shared asset compatibility contract.
+
+
+Phase 5 review preparation: [product vision](docs/PRODUCT_VISION.md), [roadmap](docs/ROADMAP.md), [performance acceptance](docs/PERFORMANCE_ACCEPTANCE.md). Production artwork and target-device testing remain pending.
