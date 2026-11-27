@@ -1,5 +1,5 @@
 // View cutaways are read-only projections. Physics/visibility use the real world.
-import {uniformShape,corners,vertices} from "./geometry.mjs";
+import {uniformShape,corners,vertices,hasVolume} from "./geometry.mjs";
 import {physicalPosition} from "./core.mjs";
 const EPS=1e-8;
 const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
@@ -49,6 +49,7 @@ export function traceVisibility(world,from,to,{maxCells=4096}={}){
   const xy=corners(g.horizontal_ft/Math.sqrt(3));let best=null;
   for(let q=lo[0];q<=hi[0];q++)for(let r=lo[1];r<=hi[1];r++)for(let z=lo[2];z<=hi[2];z++){
     const origin=physicalPosition(q,r,z,g),local=p=>[p[0]-origin.x,p[1]-origin.y,p[2]-origin.z],p0=local(from),p1=local(to),c=world.get(q,r,z);
+    if(c&&!hasVolume(c.shape))continue;
     const v=c?vertices(c.shape,g):null;
     for(let i=0;i<6;i++){
       const ids=[6,i,(i+1)%6],foot=[xy[i],xy[(i+1)%6]];

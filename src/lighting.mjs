@@ -2,6 +2,7 @@ import {physicalPosition,effectActive} from "./core.mjs";
 import {sampleSurface,hasVolume} from "./geometry.mjs";
 import {anchorHeight} from "./entities.mjs";
 import {validateLightSource} from "./environment.mjs";
+import {traceVisibility} from "./visibility.mjs";
 // Contact shadow geometry is projected onto the same top triangles as terrain.
 export function contactShadows(faces,objects){
   const surfaces=new Map();
@@ -79,15 +80,15 @@ function flicker(id,t,amount){
 }
 export function collectPointLights(world,{simulationTime=0,visualTime=0,poses=new Map(),displayed=()=>true}={}){
   const g=world.config.grid,out=[];
-  function add(id,point,l){
+  function add(id,point,l,moving=false){
     if(!l.intensity||!l.color.some(v=>v>0))return;
-    out.push({id,point:[point[0],point[1],point[2]+l.offset_z_ft],radius:l.radius_ft,color:l.color,intensity:l.intensity*flicker(id,visualTime,l.flicker)});
+    out.push({id,point:[point[0],point[1],point[2]+l.offset_z_ft],radius:l.radius_ft,color:l.color,intensity:l.intensity*flicker(id,visualTime,l.flicker),...(moving?{moving:true}:{})});
   }
   for(const e of world.entities()){
     if(!e.light)continue;const h=anchorHeight(e,world.get(...e.address),g);if(h===undefined)continue;
     const o=physicalPosition(...e.address,g),pose=poses.get(e.id);
     if(!displayed(pose?.address??e.address))continue;
-    add("entity:"+e.id,pose?.point??[o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h],e.light);
+    add("entity:"+e.id,pose?.point??[o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h],e.light,!!pose);
   }
   // Co-located fire effects and burning surface share a single source.
   const fires=new Map();
@@ -114,4 +115,40 @@ export function selectPointLights(lights,faces,sprites=[],limit=MAX_POINT_LIGHTS
   }
   candidates.sort((a,b)=>b.score-a.score||(a.l.id<b.l.id?-1:a.l.id>b.l.id?1:0));
   return {lights:candidates.slice(0,limit).map(v=>v.l),omitted:Math.max(0,candidates.length-limit)};
+}
+
+// First local-shadow adapter: small static angular depth maps, derived solely
+// from the existing terrain visibility solver. They are presentation, not LOS
+// or game authority. Unknown terrain and over-budget rays do not cast shadows.
+export const POINT_SHADOW_WIDTH=16,POINT_SHADOW_HEIGHT=8,POINT_SHADOW_LIMIT=2,POINT_SHADOW_RADIUS=24;
+export function pointShadowDirection(x,y){
+  const azimuth=((x+.5)/POINT_SHADOW_WIDTH*2-1)*Math.PI,elevation=((y+.5)/POINT_SHADOW_HEIGHT-.5)*Math.PI,c=Math.cos(elevation);
+  return [c*Math.cos(azimuth),c*Math.sin(azimuth),Math.sin(elevation)];
+}
+export class PointShadowCache{
+  #world=null;#revision=-1;#key="";#plan=null;
+  clear(){this.#world=null;this.#revision=-1;this.#key="";this.#plan=null;}
+  prepare(world,lights){
+    // Stable identity selection ignores visual flicker. Lights moving along
+    // playback paths or exceeding the first adapter's radius stay unshadowed.
+    const eligible=lights.filter(l=>!l.moving&&l.radius<=POINT_SHADOW_RADIUS).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+    const selected=eligible.slice(0,POINT_SHADOW_LIMIT),ids=selected.map(l=>l.id),key=JSON.stringify(selected.map(l=>[l.id,l.point,l.radius]));
+    const omitted=lights.length-selected.length;
+    if(!selected.length){this.clear();return {plan:null,diagnostics:{lights:0,rays:0,unknown:0,budget:0,omitted,cache_hit:false}};}
+    const hit=this.#world===world&&this.#revision===world.geometryRevision&&this.#key===key;
+    if(!hit){
+      const data=new Uint8Array(POINT_SHADOW_WIDTH*POINT_SHADOW_HEIGHT*POINT_SHADOW_LIMIT).fill(255);let rays=0,unknown=0,budget=0;
+      for(const [i,l] of selected.entries())for(let y=0;y<POINT_SHADOW_HEIGHT;y++)for(let x=0;x<POINT_SHADOW_WIDTH;x++){
+        const direction=pointShadowDirection(x,y),to=l.point.map((v,j)=>v+direction[j]*l.radius);
+        const result=traceVisibility(world,l.point,to,{maxCells:2048});rays++;
+        if(result.status==="blocked")data[(i*POINT_SHADOW_HEIGHT+y)*POINT_SHADOW_WIDTH+x]=Math.max(0,Math.min(254,Math.floor(result.t*255)));
+        else if(result.status==="unknown")unknown++;
+        else if(result.status==="budget")budget++;
+      }
+      this.#world=world;this.#revision=world.geometryRevision;this.#key=key;
+      this.#plan={data,ids,rays,unknown,budget};
+    }
+    const plan=this.#plan;
+    return {plan,diagnostics:{lights:ids.length,rays:hit?0:plan.rays,unknown:plan.unknown,budget:plan.budget,omitted,cache_hit:hit}};
+  }
 }

@@ -1,13 +1,13 @@
 // WebGL2 depth-tested triangles; all positions originate in the terrain mesh.
 import {terrainTexturePlan} from "./art-style.mjs";
-import {spriteShade,MAX_POINT_LIGHTS} from "./lighting.mjs";
+import {spriteShade,MAX_POINT_LIGHTS,POINT_SHADOW_WIDTH,POINT_SHADOW_HEIGHT,POINT_SHADOW_LIMIT} from "./lighting.mjs";
 const VS=`#version 300 es
 in vec3 a_position; in vec3 a_color; in vec2 a_uv; in vec3 a_cover; in float a_rim; in vec2 a_mask_uv; in vec4 a_weights; in float a_shade; in vec3 a_world;
 out vec3 v_color; out vec2 v_uv; out vec3 v_cover; out float v_rim; out vec2 v_mask_uv; out vec4 v_weights; out float v_shade; out vec3 v_world;
 void main(){gl_Position=vec4(a_position,1.0);v_color=a_color;v_uv=a_uv;v_cover=a_cover;v_rim=a_rim;v_mask_uv=a_mask_uv;v_weights=a_weights;v_shade=a_shade;v_world=a_world;}`;
 const FS=`#version 300 es
 precision highp float;
-in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; in vec4 v_weights; in float v_shade; in vec3 v_world; uniform float u_water_time; uniform int u_light_count; uniform vec4 u_light_pos[${MAX_POINT_LIGHTS}]; uniform vec4 u_light_rgb[${MAX_POINT_LIGHTS}]; uniform sampler2D u_texture; uniform sampler2D u_layer1; uniform sampler2D u_layer2; uniform sampler2D u_layer3; uniform sampler2D u_mask; uniform sampler2D u_emissive_mask; uniform int u_mode; uniform float u_detail_strength; uniform ivec4 u_color_modes; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
+in vec3 v_color; in vec2 v_uv; in vec3 v_cover; in float v_rim; in vec2 v_mask_uv; in vec4 v_weights; in float v_shade; in vec3 v_world; uniform float u_water_time; uniform int u_light_count; uniform vec4 u_light_pos[${MAX_POINT_LIGHTS}]; uniform vec4 u_light_rgb[${MAX_POINT_LIGHTS}]; uniform int u_light_shadow[${MAX_POINT_LIGHTS}]; uniform sampler2D u_point_shadow; uniform sampler2D u_texture; uniform sampler2D u_layer1; uniform sampler2D u_layer2; uniform sampler2D u_layer3; uniform sampler2D u_mask; uniform sampler2D u_emissive_mask; uniform int u_mode; uniform float u_detail_strength; uniform ivec4 u_color_modes; uniform bool u_mask_enabled; uniform bool u_debug; uniform float u_mask_scale; uniform float u_softness; uniform float u_bleed; uniform vec3 u_leaf_color; uniform vec3 u_snow_color; uniform vec3 u_scorch_color; out vec4 color;
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
 float coverage(float amount,float noise){
@@ -20,12 +20,33 @@ vec3 materialColor(vec3 tex,int mode){
   vec3 detail=mode==1?tex:vec3(tex.r);
   return v_color*mix(vec3(1.0),detail,u_detail_strength);
 }
+float pointVisibility(int index,vec3 delta,float distance,float radius){
+  int slot=u_light_shadow[index]-1;if(slot<0||distance<.0001)return 1.0;
+  vec3 direction=delta/distance;
+  float azimuth=length(direction.xy)<.0001?0.0:atan(direction.y,direction.x);
+  float elevation=asin(clamp(direction.z,-1.0,1.0));
+  vec2 cell=vec2((azimuth/6.28318530718+.5)*float(${POINT_SHADOW_WIDTH}), (elevation/3.14159265359+.5)*float(${POINT_SHADOW_HEIGHT}))-.5;
+  ivec2 base=ivec2(floor(cell));vec2 blend=fract(cell);
+  float result=0.0;
+  // Blend four angular samples after comparing depths, not the distances.
+  // The bias reduces self-shadowing from coarse directions and quantization.
+  float bias=.35+distance*.12+radius/255.0;
+  for(int y=0;y<2;y++)for(int x=0;x<2;x++){
+    int sx=(base.x+x+${POINT_SHADOW_WIDTH})%${POINT_SHADOW_WIDTH};
+    int sy=clamp(base.y+y,0,${POINT_SHADOW_HEIGHT}-1)+slot*${POINT_SHADOW_HEIGHT};
+    float depth=texelFetch(u_point_shadow,ivec2(sx,sy),0).r*radius;
+    float weight=(x==0?1.0-blend.x:blend.x)*(y==0?1.0-blend.y:blend.y);
+    result+=weight*float(distance<=depth+bias);
+  }
+  return result;
+}
 vec3 localLight(){
   vec3 sum=vec3(0.0);
   for(int i=0;i<${MAX_POINT_LIGHTS};i++){
     if(i>=u_light_count)break;
-    float falloff=max(0.0,1.0-length(v_world-u_light_pos[i].xyz)/u_light_pos[i].w);
-    sum+=u_light_rgb[i].rgb*u_light_rgb[i].a*falloff*falloff;
+    vec3 delta=v_world-u_light_pos[i].xyz;float distance=length(delta),radius=u_light_pos[i].w;
+    float falloff=max(0.0,1.0-distance/radius);
+    if(falloff>0.0)sum+=u_light_rgb[i].rgb*u_light_rgb[i].a*falloff*falloff*pointVisibility(i,delta,distance,radius);
   }
   return sum;
 }
@@ -88,9 +109,9 @@ export function createRenderer(canvas){
   const {vao,buffer}=geometryBuffer();let terrainCache=null,projectionCache=null,terrainUploads=0,terrainCacheHit=false,drawCalls=0;
   function releaseTerrain(){if(terrainCache)for(const b of terrainCache.batches.values())if(b.gpu){gl.deleteVertexArray(b.gpu.vao);gl.deleteBuffer(b.gpu.buffer);}terrainCache=null;}
   const waterTime=gl.getUniformLocation(program,"u_water_time");
-  const mode=gl.getUniformLocation(program,"u_mode"),lightCount=gl.getUniformLocation(program,"u_light_count"),lightPos=gl.getUniformLocation(program,"u_light_pos[0]"),lightRGB=gl.getUniformLocation(program,"u_light_rgb[0]");
+  const mode=gl.getUniformLocation(program,"u_mode"),lightCount=gl.getUniformLocation(program,"u_light_count"),lightPos=gl.getUniformLocation(program,"u_light_pos[0]"),lightRGB=gl.getUniformLocation(program,"u_light_rgb[0]"),lightShadow=gl.getUniformLocation(program,"u_light_shadow[0]");
   const uniforms=Object.fromEntries(["u_detail_strength","u_color_modes","u_mask_enabled","u_debug","u_mask_scale","u_softness","u_bleed","u_leaf_color","u_snow_color","u_scorch_color"].map(k=>[k,gl.getUniformLocation(program,k)]));
-  gl.uniform1i(gl.getUniformLocation(program,"u_texture"),0);gl.uniform1i(gl.getUniformLocation(program,"u_mask"),1);gl.uniform1i(gl.getUniformLocation(program,"u_emissive_mask"),5);
+  gl.uniform1i(gl.getUniformLocation(program,"u_texture"),0);gl.uniform1i(gl.getUniformLocation(program,"u_mask"),1);gl.uniform1i(gl.getUniformLocation(program,"u_emissive_mask"),5);gl.uniform1i(gl.getUniformLocation(program,"u_point_shadow"),6);
   const units=[0,2,3,4];for(let i=1;i<4;i++)gl.uniform1i(gl.getUniformLocation(program,"u_layer"+i),units[i]);
   function texture(){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);return t;}
   const ground=texture(),pixels=new Uint8Array(64*64*4);
@@ -103,6 +124,11 @@ export function createRenderer(canvas){
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
   for(let i=1;i<4;i++){gl.activeTexture(gl.TEXTURE0+units[i]);gl.bindTexture(gl.TEXTURE_2D,ground);}
   gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
+  gl.activeTexture(gl.TEXTURE6);const pointShadowTexture=texture();let lastShadowData=null;
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.R8,POINT_SHADOW_WIDTH,POINT_SHADOW_HEIGHT*POINT_SHADOW_LIMIT,0,gl.RED,gl.UNSIGNED_BYTE,new Uint8Array(POINT_SHADOW_WIDTH*POINT_SHADOW_HEIGHT*POINT_SHADOW_LIMIT).fill(255));
+  gl.activeTexture(gl.TEXTURE0);
   const mask=texture();let maskEnabled=false;
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,mask);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([128,128,128,255]));
@@ -152,12 +178,18 @@ export function createRenderer(canvas){
     drawCalls++;gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.data.length/22);
     gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   }
-  function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
+  function render(faces,view,{projectionKey=null,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],pointShadow=null,softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
     // Keep the auxiliary sampler complete even when a previous masked sprite was evicted.
     gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
     gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.105,.16,.20,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniform1f(waterTime,visualTime);
     const lights=pointLights.slice(0,MAX_POINT_LIGHTS);
+    if(pointShadow&&pointShadow.data!==lastShadowData){
+      gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D,pointShadowTexture);
+      gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,POINT_SHADOW_WIDTH,POINT_SHADOW_HEIGHT*POINT_SHADOW_LIMIT,gl.RED,gl.UNSIGNED_BYTE,pointShadow.data);
+      gl.activeTexture(gl.TEXTURE0);lastShadowData=pointShadow.data;
+    }
+    gl.uniform1iv(lightShadow,new Int32Array(lights.map(l=>pointShadow?(pointShadow.ids.indexOf(l.id)+1):0)));
     gl.uniform1i(lightCount,lights.length);if(lights.length){gl.uniform4fv(lightPos,lights.flatMap(l=>[...l.point,l.radius]));gl.uniform4fv(lightRGB,lights.flatMap(l=>[...l.color,l.intensity]));}
     gl.uniform1f(uniforms.u_detail_strength,style?.detail.strength??.25);
     gl.uniform4iv(uniforms.u_color_modes,[0,0,0,0]);
