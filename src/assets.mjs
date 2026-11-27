@@ -187,9 +187,19 @@ export async function resolveAtlasBinding(raw){
   const pack=await atlasPackSession(raw.manifest,undefined,raw.archive_sha256);return adoptSpatialProfile(raw,pack.describe(raw.asset));
 }
 
-export async function createAtlasSprite({height_ft=4,...binding},registry){
+export async function createAtlasSprite({height_ft=4,emissive_mask,...binding},registry){
   if(!Number.isFinite(height_ft)||height_ft<=0)throw Error("Invalid sprite height");
-  const raster=await createAtlasRaster(binding,registry);
+  const pack=await atlasPackSession(binding.manifest,registry,binding.archive_sha256);
+  const raster=pack.createRaster(binding);
+  if(emissive_mask!==undefined){
+    assert(raster.contract.kind==="region"&&binding.state==null&&!binding.views&&!binding.walk_state&&!binding.wind?.states?.length,"Emissive mask requires a static nondirectional region");
+    const mask=pack.createRaster({asset:emissive_mask,regionOnly:true});
+    await Promise.all([raster.update(0),mask.update(0)]);
+    assert(mask.pixelWidth===raster.pixelWidth&&mask.pixelHeight===raster.pixelHeight&&mask.pivot.every((v,i)=>Math.abs(v-raster.pivot[i])<1e-8),"Emissive mask logical canvas/pivot mismatch");
+    const pixels=mask.image.getContext("2d").getImageData(0,0,mask.pixelWidth,mask.pixelHeight).data;
+    for(let i=0;i<pixels.length;i+=4)if(pixels[i+3])assert(Math.abs(pixels[i]-pixels[i+1])<=1&&Math.abs(pixels[i]-pixels[i+2])<=1,"Emissive mask must be grayscale");
+    raster.emissiveMask=mask.image;
+  }
   return Object.assign(raster,{width:height_ft*raster.pixelWidth/raster.pixelHeight,height:height_ft});
 }
 export async function createAtlasMask(binding){

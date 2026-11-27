@@ -32,6 +32,25 @@ with sync_playwright() as p:
     page.locator("#resetView").click()
     page.locator("#loadActor").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
+    # Synthetic canonical pack verifies actual region mask qualification.
+    pixels=page.evaluate("""() => {
+      const c=document.createElement('canvas');c.width=6;c.height=2;const g=c.getContext('2d');
+      g.fillStyle='orange';g.fillRect(0,0,2,2);g.fillStyle='black';g.fillRect(2,0,1,2);g.fillStyle='white';g.fillRect(3,0,1,2);g.fillStyle='red';g.fillRect(4,0,2,2);
+      return c.toDataURL().split(',')[1];
+    }""")
+    import base64
+    region=lambda id,x,w=2: {"id":id,"kind":"region","texture":"sheet","rect_px":[x,0,w,2],"pivot":[.5,1]}
+    manifest={"schema":"smi-visual-pack/1","pack_id":"fixture.emissive","version":"1","license":"CC0-1.0","textures":{"sheet":{"path":"sheet.png","width_px":6,"height_px":2}},"assets":[region("lamp",0),region("mask",2),region("invalid-color",4),region("invalid-size",2,1)]}
+    page.route("**/test-emissive/manifest.json",lambda route: route.fulfill(json=manifest))
+    page.route("**/test-emissive/sheet.png",lambda route: route.fulfill(body=base64.b64decode(pixels),content_type="image/png"))
+    masks=page.evaluate("""async () => {
+      const {createAtlasSprite}=await import('/src/assets.mjs');
+      const binding={manifest:'./test-emissive/manifest.json',asset:'lamp',emissive_mask:'mask'};
+      const raster=await createAtlasSprite(binding),valid=raster.emissiveMask.width===2&&raster.emissiveMask.height===2;
+      const bad={};for(const id of ['invalid-color','invalid-size'])try{await createAtlasSprite({...binding,emissive_mask:id});bad[id]=false;}catch(e){bad[id]=e.message;}
+      return {valid,bad};
+    }""")
+    assert masks["valid"] and "grayscale" in masks["bad"]["invalid-color"] and "mismatch" in masks["bad"]["invalid-size"],masks
     # Real shared ZIP reader, canonical composition and independent input/slot choices.
     stream=BytesIO()
     root=Path("examples/chest-fixture")
@@ -239,12 +258,19 @@ with sync_playwright() as p:
       const actor={image:img,revision:0,points:[[5,5,2],[20,5,2],[20,20,2],[5,20,2]]};
       r.render([face],view,{pattern:false,lighting,sprites:[actor],pointLights:[light]});const sprite=r.readPixel(12,12);
       r.render([face],view,{pattern:false,lighting,sprites:[{...actor,emissive:1}]});const emissive=r.readPixel(12,12);
-      return {center,far,off,sprite,emissive};
+      const mask=document.createElement('canvas');mask.width=2;mask.height=1;const m=mask.getContext('2d');m.fillStyle='black';m.fillRect(0,0,1,1);m.fillStyle='white';m.fillRect(1,0,1,1);
+      const masked={...actor,emissive:1,emissiveMask:mask,points:[[5,5,2],[35,5,2],[35,25,2],[5,25,2]]};
+      r.render([face],view,{pattern:false,lighting,sprites:[masked]});const dark=r.readPixel(7,12),bright=r.readPixel(32,12);
+      r.render([face],view,{pattern:false,lighting,sprites:[masked],softSprites:true});const softDark=r.readPixel(7,12),softBright=r.readPixel(32,12);
+      return {center,far,off,sprite,emissive,dark,bright,softDark,softBright};
     }""")
     assert local_light["center"][0]>120 and local_light["center"][1]<35,local_light
     assert local_light["far"]==local_light["off"],local_light
     assert local_light["sprite"][0]>240 and local_light["sprite"][1]<180,local_light
     assert all(v>245 for v in local_light["emissive"][:3]),local_light
+    assert all(140<v<180 for v in local_light["dark"][:3]),local_light
+    assert all(v>245 for v in local_light["bright"][:3]),local_light
+    assert local_light["softDark"]==local_light["dark"] and local_light["softBright"]==local_light["bright"],local_light
     # Lighting also shades full snow coverage and preserves unlit debug colors.
     lit=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');
