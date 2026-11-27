@@ -41,6 +41,20 @@ with sync_playwright() as p:
     page.wait_for_function("Math.abs(document.querySelector('#viewport').clientWidth-"+str(int(start["width"]))+")<2")
     page.wait_for_function("document.querySelector('#scene').width===document.querySelector('#viewport').clientWidth")
     page.screenshot(path="/tmp/hex-world-workspace.png")
+    page.locator('[data-panel="scenePanel"]').click()
+    assert page.locator('#sceneObjects [data-entity="demo-actor"]').count()==1
+    page.locator("#sceneSearch").fill("missing")
+    assert page.locator("#sceneObjects button").count()==0
+    page.locator("#sceneSearch").fill("")
+    page.locator('#sceneObjects [data-entity="demo-actor"]').click()
+    assert page.locator("#assetPanel").is_visible()
+    assert page.locator("#objects").input_value()=="demo-actor"
+    page.locator('[data-panel="scenePanel"]').click()
+    page.locator("#focusSelectedObject").click()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.panY!==50")
+    page.locator("#resetView").click()
+    page.screenshot(path="/tmp/hex-world-hierarchy.png")
+    page.locator('[data-panel="terrainPanel"]').click()
     control(page,"#cameraAlignment").select_option("0")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).camera.alignment_deg===0")
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
@@ -168,7 +182,7 @@ with sync_playwright() as p:
     thumbnail=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
     page.route("**/previews/"+"b"*64+".png",lambda route: route.fulfill(body=thumbnail,content_type="image/png"))
     page.route("**/test-catalog.json",lambda route: route.fulfill(json=catalog))
-    control(page,"summary",has_text="Browse published Atlas assets").click()
+    control(page,"#openAssetLibrary").click()
     control(page,"#catalogURL").fill("http://127.0.0.1:8000/test-catalog.json")
     control(page,"#refreshCatalog").click()
     page.wait_for_function("document.querySelector('#catalogAssets').options.length===26")
@@ -189,8 +203,10 @@ with sync_playwright() as p:
     assert "CC0-1.0" in control(page,"#catalogSelection").text_content()
     control(page,"#catalogCards img").scroll_into_view_if_needed()
     page.wait_for_function("document.querySelector('#catalogCards img')?.naturalWidth===1")
+    assert page.locator("#assetDock").is_visible()
     page.screenshot(path="/tmp/hex-world-library.png")
     control(page,"#loadCatalogAsset").click()
+    page.locator("#closeLibrary").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     control(page,"#loadChest").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
@@ -833,7 +849,7 @@ with sync_playwright() as p:
     page.wait_for_function("!document.querySelector('#applyEditPlan').disabled")
     control(page,"#applyEditPlan").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.history.undo===1")
-    control(page,"summary",has_text="Session asset palette").click()
+    control(page,"#openAssetPalette").click()
     control(page,"#pinAsset").click()
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===1")
     with page.expect_download() as saved_palette:
@@ -848,6 +864,7 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#paletteStatus').textContent.startsWith('Previous palette retained:')")
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.palette===1")
     assert control(page,"#assetPalette button").count()==1
+    page.locator("#closeLibrary").click()
     with page.expect_download() as diagnostic:
         control(page,"#exportDiagnostics").click()
     diagnostics=json.loads(Path(diagnostic.value.path()).read_text())

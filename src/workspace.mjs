@@ -22,6 +22,18 @@ export function bindWorkspace(){
     for(const s of sections)s.hidden=s!==panel;
     document.getElementById("inspectorScroll").scrollTop=0;
   }
+  const dock=document.getElementById("assetDock"),dockToggle=document.getElementById("toggleLibrary"),dockTabs=[...dock.querySelectorAll("[data-dock]")],dockSections=[...dock.querySelectorAll(".dock-section")];
+  function setDock(open){dock.hidden=!open;dockToggle.setAttribute("aria-expanded",String(open));}
+  function openDock(id){
+    if(root.classList.contains("focus-world"))setFocus(false);setDock(true);
+    if(id){for(const b of dockTabs)b.setAttribute("aria-current",String(b.dataset.dock===id));for(const s of dockSections)s.hidden=s.id!==id;}
+    const detail=dockSections.find(s=>!s.hidden)?.querySelector("details");if(detail)detail.open=true;
+  }
+  for(const b of dockTabs)b.addEventListener("click",()=>openDock(b.dataset.dock));
+  dockToggle.addEventListener("click",()=>dock.hidden?openDock():setDock(false));
+  document.getElementById("closeLibrary").addEventListener("click",()=>{setDock(false);dockToggle.focus({preventScroll:true});});
+  document.getElementById("openAssetLibrary").addEventListener("click",()=>openDock("catalogDock"));
+  document.getElementById("openAssetPalette").addEventListener("click",()=>openDock("paletteDock"));
   for(const b of panels)b.addEventListener("click",()=>openPanel(b.dataset.panel));
   for(const b of toolButtons)b.addEventListener("click",()=>{
     paint.value=b.dataset.tool;paint.dispatchEvent(new Event("change",{bubbles:true}));syncTool();
@@ -32,9 +44,9 @@ export function bindWorkspace(){
   focus.addEventListener("click",()=>setFocus(!root.classList.contains("focus-world")));exit.addEventListener("click",()=>setFocus(false));
   document.getElementById("showViewSettings").addEventListener("click",()=>openPanel("viewPanel"));
   const ready=document.getElementById("workspaceReady"),selection=document.getElementById("workspaceSelection"),perf=document.getElementById("workspacePerf");
-  return ({selected,performance,quality})=>{
+  return {openPanel,openDock,update:({selected,performance,quality})=>{
     const write=(el,value)=>{if(el.textContent!==value)el.textContent=value;};
     write(ready,"Ready");write(selection,"Q "+selected[0]+" · R "+selected[1]+" · Z "+selected[2]);
     write(perf,"WebGL2 · "+(performance.fps??"—")+" FPS · "+quality);
-  };
+  }};
 }

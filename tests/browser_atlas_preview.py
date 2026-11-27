@@ -84,7 +84,7 @@ with sync_playwright() as p:
     (out/"report.json").write_text(json.dumps(report,indent=2))
     # Select a published chest through the existing catalog, not a special-case loader.
     asset="smi.world.fantasy.recovered.chests-20261125.weathered-wood-chest"
-    control(page,"summary",has_text="Browse published Atlas assets").click()
+    control(page,"#openAssetLibrary").click()
     control(page,"#refreshCatalog").click()
     page.wait_for_function("document.querySelector('#catalogDomain').value==='world-environment'",timeout=120000)
     control(page,"#catalogSearch").fill(asset)
@@ -93,6 +93,7 @@ with sync_playwright() as p:
     control(page,"#catalogCards button").click()
     assert control(page,"#catalogAssets").input_value()==asset
     control(page,"#loadCatalogAsset").click()
+    page.locator("#closeLibrary").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent==='Atlas sprite loaded' && document.querySelector('#spatialStatus').textContent.includes('2.5 ft')",timeout=120000)
     before=status()["world_objects"]
     control(page,"#placeActor").click()

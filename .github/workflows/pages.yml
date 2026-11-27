@@ -42,6 +42,7 @@ jobs:
             /tmp/hex-world-qa.png
             /tmp/hex-world-workspace.png
             /tmp/hex-world-library.png
+            /tmp/hex-world-hierarchy.png
           if-no-files-found: ignore
       - name: Actual published Atlas preview audit (separate external evidence)
         if: github.event_name == 'pull_request'
