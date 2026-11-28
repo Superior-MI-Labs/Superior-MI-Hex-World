@@ -1,4 +1,4 @@
-import {cornerRefs,hasVolume,uniformShape} from "./geometry.mjs";
+import {cornerRefs,hasVolume} from "./geometry.mjs";
 import {cellShape,makeEditPlan} from "./editor.mjs";
 const assert=(ok,message)=>{if(!ok)throw Error(message);};
 const clamp=(v,n)=>Math.max(0,Math.min(n,v));
@@ -35,7 +35,7 @@ function protect(world,edits){
   const protectedCells=new Set([...world.entities(),...world.effects()].map(e=>key(e.address)));
   for(const e of edits){
     const old=world.get(...e.address),c=old.components??{};
-    assert(!protectedCells.has(key(e.address))&&!c.water?.fill&&!c.interaction_tags?.length&&!c.scatter_hidden?.length&&!c.surface?.burn,"Occupied, wet or protected terrain: use explicit cell editing");
+    const [q,r,z]=e.address;assert(!protectedCells.has(key(e.address))&&!protectedCells.has(key([q,r,z-1]))&&!c.water?.fill&&!c.interaction_tags?.length&&!c.scatter_hidden?.length&&!c.surface?.burn,"Occupied, wet or protected terrain: use explicit cell editing");
   }
 }
 export function planSurfaceSculpt(world,address,index,target,{levels,connected=true,whole=false,allowed=()=>true}={}){

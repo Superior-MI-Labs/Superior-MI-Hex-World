@@ -6,7 +6,7 @@ import {buildWaterSurfaces,stepWater,waterTicks} from "./water.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,selectionBrush,mergeSelection,CellEditHistory,makeEditPlan,inspectEditPlan,applyEditPlan,cellShape,cellMaterial,cellWater,hexStroke,exportBuildContext} from "./editor.mjs";
 import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing,planWeatherExposure} from "./builder.mjs";
-import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys,viewportSize,vertexDragDelta} from "./camera.mjs";
+import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys,viewportSize,vertexDragDelta,VERTICAL_PROJECTION} from "./camera.mjs";
 import {bindWorkspace} from "./workspace.mjs";
 import {bindCatalogView} from "./catalog-view.mjs";
 import {bindSceneView} from "./scene-view.mjs";
@@ -187,7 +187,7 @@ const displayedAddress=a=>cutLevel()===null||!cutawayMask(cutLevel(),cutOptions(
 function refreshCutaway(){
   dirty=true;visibilityPreview=null;
   if(!displayedAddress(selected)){selected=[selected[0],selected[1],cutLevel()];selection=[[...selected]];faceSelect.value="upper";sync();}
-  $("cutStatus").textContent=cutCenter?"Centered at "+cutCenter.join(", "):"Global cutaway";
+  $("cutStatus").textContent=cutCenter?"Centered at "+cutCenter.join(", "):"Global cutaway";if(selectionMode.value==="surface")sync();
 }
 $("cutaway").onchange=refreshCutaway;
 $("cutRadius").onchange=refreshCutaway;
@@ -464,7 +464,7 @@ function sync(){
   $("cellTags").value=c.components?.interaction_tags?.join(", ")??"";
   const water=c.components?.water;$("waterFill").value=water?.fill??0;$("waterFlowX").value=water?.flow_ft_s[0]??0;$("waterFlowY").value=water?.flow_ft_s[1]??0;$("waterFixed").checked=water?.fixed===true;
   $("waterStatus").textContent=water?.fill?((water.fill*grid.vertical_ft).toFixed(2)+" ft above cell base"):"Dry cell";
-  const sculpt=surfaceMode();faceSelect.disabled=sculpt;slider.disabled||=sculpt;vertexSelect.disabled=sculpt;$("sculptWhole").disabled=!sculpt;
+  const sculpt=surfaceMode(),surfaceSelected=selectionMode.value==="surface"&&$("paintTool").value==="select";faceSelect.disabled=surfaceSelected;slider.disabled||=surfaceSelected;vertexSelect.disabled=surfaceSelected;$("sculptWhole").disabled=!sculpt;
   if(selectionMode.value==="surface"){$("sculptStatus").textContent=sculpt?(currentSurface().error||"Drag exposed surface vertices; release to apply; Escape cancels"):"Surface mode requires Select and full world view";}
   syncConstruction();
 }
@@ -591,6 +591,7 @@ function finishBrush(commit){const stroke=drag;drag=null;gesture=null;if(!stroke
   if(stroke.edits.length||stroke.objects.length){try{const plan={schema:"smi-hex-edit-plan/1",world_id:world.config.id,label:"Paint "+stroke.mode,edits:stroke.edits,entities:stroke.objects};if(applyEditPlan(world,history,plan)){dirty||=stroke.edits.length>0;for(const e of stroke.objects)playback.delete(e.id);}sync();$("planStatus").textContent="Stroke applied";}catch(e){$("planStatus").textContent=e.message;}}
 }
 canvas.onpointerdown=e=>{const [x,y]=pos(e);if(e.button===1||e.button===2){e.preventDefault();drag={id:e.pointerId,pan:true,x,y,panX,panY};canvas.setPointerCapture(e.pointerId);return;}if(e.button!==0)return;canvas.focus({preventScroll:true});const extend=e.shiftKey||e.ctrlKey||e.metaKey;const painting=$("paintTool").value!=="select",radius=Number($("brushRadius").value),handle=painting||extend||radius>0?null:nearestHandle(handles,x,y,vertexSelect.value);
+  if(selectionMode.value==="surface"&&$("paintTool").value==="select"&&!surfaceMode()){$("sculptStatus").textContent="Switch to full world view or individual cell mode";return;}
   if(surfaceMode()){
     if(handle&&currentSurface().profile){const p=currentSurface().profile;drag={id:e.pointerId,sculpt:true,owner:world,rev:world.geometryRevision,y,h:p.heights[handle.index],index:handle.index,address:[...selected],options:sculptOptions(),plan:null,target:p.heights[handle.index]};canvas.setPointerCapture(e.pointerId);return;}
     const hit=pickCell(x,y);if(hit)selectSurface(hit.address);return;
@@ -616,7 +617,7 @@ function finishSculpt(commit){
   }catch(e){$("sculptStatus").textContent=e.message;}
 }
 canvas.onpointermove=e=>{
-  if(!drag){if(surfaceMode()){const hit=pickCell(...pos(e));hoverColumn=hit?.address??null;}else hoverColumn=null;return;}
+  if(!drag){if(surfaceMode()){const hit=pickCell(...pos(e));hoverColumn=null;if(hit)try{hoverColumn=surfaceColumn(world,hit.address,LEVELS)?.address??null;}catch{}}else hoverColumn=null;return;}
   if(drag.id!==e.pointerId)return;
   if(drag.sculpt){
     const target=Math.round(drag.h+vertexDragDelta(drag.y-pos(e)[1],scale,grid));
@@ -868,13 +869,13 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     const lower=ring(c.bottom),upper=ring(c.top);polygon(lower,null,"#f2b45c");polygon(upper,null,"#f2b45c");for(let i=0;i<24;i+=6){ctx.beginPath();ctx.moveTo(lower[i].x,lower[i].y);ctx.lineTo(upper[i].x,upper[i].y);ctx.strokeStyle="#f2b45c";ctx.stroke();}
   }}catch(e){$("colliderStatus").textContent=e.message;}
   const v=vertices(get(),grid),key=activeFace(),sculpt=surfaceMode(),profile=sculpt?currentSurface().profile:null;
-  handles=sculpt?(profile?profile.heights.map((h,index)=>({layer:"upper",index,...projectLocal([selected[0],selected[1],0],[v.upper[index][0],v.upper[index][1],h*grid.vertical_ft/grid.geometry_subdivisions]) )})):[]):refs().map(h=>({...h,...projectLocal(selected,v[h.layer][h.index])}));
+  handles=selectionMode.value==="surface"&&$("paintTool").value==="select"&&!sculpt?[]:sculpt?(profile?profile.heights.map((h,index)=>({layer:"upper",index,...projectLocal([selected[0],selected[1],0],[v.upper[index][0],v.upper[index][1],h*grid.vertical_ft/grid.geometry_subdivisions])})):[]):refs().map(h=>({...h,...projectLocal(selected,v[h.layer][h.index])}));
   // Outline the logical control face even when a neighboring cell clips it.
   // This is an editor overlay, not extra world geometry.
   if(sculpt){
     if(hoverColumn&&!drag){const c=world.get(...hoverColumn);if(c&&hasVolume(c.shape))polygon(vertices(c.shape,grid).upper.slice(0,6).map(p=>projectLocal(hoverColumn,p)),null,"#66dfea");}
-    if(drag?.sculpt&&drag.plan){const p=handles.find(h=>h.index===drag.index);if(p){const y=p.y-(drag.target-drag.h)*grid.vertical_ft/grid.geometry_subdivisions*scale*Math.sqrt(2/3);ctx.strokeStyle="#66dfea";ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x,y);ctx.stroke();ctx.beginPath();ctx.arc(p.x,y,7,0,Math.PI*2);ctx.stroke();}}
-  }else if(key.startsWith("side:"))polygon(handles,null,"#f2bd60");
+    if(drag?.sculpt&&drag.plan){const p=handles.find(h=>h.index===drag.index);if(p){const y=p.y-(drag.target-drag.h)*grid.vertical_ft/grid.geometry_subdivisions*scale*VERTICAL_PROJECTION;ctx.strokeStyle="#66dfea";ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x,y);ctx.stroke();ctx.beginPath();ctx.arc(p.x,y,7,0,Math.PI*2);ctx.stroke();}}
+  }else if(!handles.length){}else if(key.startsWith("side:"))polygon(handles,null,"#f2bd60");
   else{
     polygon(handles.slice(0,6),null,"#f2bd60");
     if($("wire").checked)for(let i=0;i<6;i++)polygon([handles[6],handles[i],handles[(i+1)%6]],null,"#d2e3c3");
