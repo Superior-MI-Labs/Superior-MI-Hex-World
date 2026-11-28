@@ -33,9 +33,14 @@ export function surfaceColumn(world,address,levels){
 }
 function protect(world,edits){
   const protectedCells=new Set([...world.entities(),...world.effects()].map(e=>key(e.address)));
-  for(const e of edits){
-    const old=world.get(...e.address),c=old.components??{};
-    const [q,r,z]=e.address;assert(!protectedCells.has(key(e.address))&&!protectedCells.has(key([q,r,z-1]))&&!c.water?.fill&&!c.interaction_tags?.length&&!c.scatter_hidden?.length&&!c.surface?.burn,"Occupied, wet or protected terrain: use explicit cell editing");
+  const affected=new Map();
+  for(const {address} of edits){
+    const [q,r,z]=address;
+    for(const a of [address,[q,r,z-1]])affected.set(key(a),a);
+  }
+  for(const [k,a] of affected){
+    const c=world.get(...a)?.components??{};
+    assert(!protectedCells.has(k)&&!c.water?.fill&&!c.interaction_tags?.length&&!c.scatter_hidden?.length&&!c.surface?.burn,"Occupied, wet or protected terrain: use explicit cell editing");
   }
 }
 export function planSurfaceSculpt(world,address,index,target,{levels,connected=true,whole=false,allowed=()=>true}={}){

@@ -9,3 +9,11 @@ test("protect unknown columns, slabs, separated layers and occupied cells",()=>{
 test("connected matching corner edits use world height and protect deliberate cliffs",()=>{const w=world();w.set(0,1,0,{material:"soil",shape:uniformShape(2)});w.set(1,0,0,{material:"soil",shape:uniformShape(1)});const p=planSurfaceSculpt(w,[0,0,0],0,3,{levels,connected:true});assert.ok(p.edits.some(e=>e.address.join(",")==="0,1,1"));assert.ok(!p.edits.some(e=>e.address[0]===1&&e.address[1]===0));assert.throws(()=>planSurfaceSculpt(w,[0,0,0],6,3,{...opts,allowed:()=>false}),/active editor/);});
 
 test("raising above an occupied support is rejected without changing terrain",()=>{const w=world();w.putEntity({id:"prop",address:[0,0,0],anchor:"surface",visual:{manifest:"./fixture.json",asset:"fixture",height_ft:2}});assert.throws(()=>planSurfaceSculpt(w,[0,0,0],6,3,opts),/protected/);assert.equal(w.get(0,0,1).material,"air");});
+
+test("cross-seam raising cannot bury protected support components",()=>{
+  for(const components of [{interaction_tags:["protected"]},{scatter_hidden:["fixture"]},{surface:{burn:1}},{water:{fill:.5}}]){
+    const w=world();w.set(0,0,0,{...w.get(0,0,0),components});const before=w.snapshot();
+    for(const whole of [false,true])assert.throws(()=>planSurfaceSculpt(w,[0,0,0],6,3,{...opts,whole}),/protected/);
+    assert.deepEqual(w.snapshot(),before);
+  }
+});
