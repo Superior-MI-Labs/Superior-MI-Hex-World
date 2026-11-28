@@ -63,7 +63,7 @@ const demoVisual={manifest:"./examples/atlas-character/manifest.json",asset:"smi
 let actor=null,spriteRequest=0,art=null,activeBinding=demoVisual;
 const palette=new Map();let paletteRequest=0;
 function refreshPalette(){const host=$("assetPalette");host.replaceChildren();for(const [key,v] of palette){const b=document.createElement("button"),thumb=document.createElement("canvas");b.type="button";b.title=v.binding.asset;thumb.width=48;thumb.height=48;thumb.style.cssText="width:48px;height:48px;vertical-align:middle;border:0";const w=v.image.width,h=v.image.height,s=Math.min(48/w,48/h);thumb.getContext("2d").drawImage(v.image,(48-w*s)/2,(48-h*s)/2,w*s,h*s);b.append(thumb,document.createTextNode(" "+v.binding.asset));b.onclick=()=>loadBinding(v.binding);host.append(b);}}
-$("pinAsset").onclick=()=>{if(!actor)return;paletteRequest++;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
+$("pinAsset").onclick=()=>{if(!actor||$("paintLoadedAsset").disabled)return;paletteRequest++;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
 $("clearPalette").onclick=()=>{paletteRequest++;palette.clear();refreshPalette();$("paletteStatus").textContent="Palette cleared";};
 $("exportPalette").onclick=()=>downloadJSON([...palette.values()].map(v=>v.binding),"hex-asset-palette.json");
 $("importPalette").onchange=async()=>{
@@ -379,7 +379,7 @@ async function loadCatalogSelection(paint=false){
   const a=catalogMatches.find(e=>e.id===$("catalogAssets").value);if(!a)return;
   const {height_ft,...source}=a.binding,owner=world,previousTool=$("paintTool").value;
   const loaded=await loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);
-  if(paint&&loaded&&world===owner&&$("paintTool").value===previousTool)activateAssetBrush();
+  if(paint&&loaded&&world===owner&&$("paintTool").value===previousTool&&$("catalogAssets").value===a.id&&$("assetDock").getClientRects().length&&$("catalogDock").getClientRects().length)activateAssetBrush();
 }
 $("loadCatalogAsset").onclick=()=>loadCatalogSelection();
 $("loadAndPaint").onclick=()=>loadCatalogSelection(true);

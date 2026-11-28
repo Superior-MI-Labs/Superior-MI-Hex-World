@@ -896,6 +896,14 @@ with sync_playwright() as p:
     scene.scroll_into_view_if_needed()
     box=scene.bounding_box()
     xy=page.evaluate("""async () => {const {project}=await import('/src/camera.mjs');return project([5,0,2.5],JSON.parse(document.querySelector('#status').textContent).camera);}""")
+    page.mouse.move(*screen(xy))
+    page.mouse.down()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.preview_sprites===1")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).world_objects")==1
+    page.keyboard.press("Escape")
+    page.mouse.up()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.preview_sprites===0")
+    assert page.evaluate("JSON.parse(document.querySelector('#status').textContent).world_objects")==1
     page.mouse.click(*screen(xy))
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).world_objects===2")
     control(page,"#undoEdit").click()
