@@ -1,11 +1,12 @@
 import {World,Clock,effect,effectActive,physicalPosition} from "./core.mjs";
 import {vertices,uniformShape,sampleSurface,hasVolume} from "./geometry.mjs";
+import {surfaceColumn,planSurfaceSculpt} from "./surface-sculpt.mjs";
 import {planVertexEdit,vertexLimits,TerrainFaceCache} from "./terrain.mjs";
 import {buildWaterSurfaces,stepWater,waterTicks} from "./water.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,selectionBrush,mergeSelection,CellEditHistory,makeEditPlan,inspectEditPlan,applyEditPlan,cellShape,cellMaterial,cellWater,hexStroke,exportBuildContext} from "./editor.mjs";
 import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing,planWeatherExposure} from "./builder.mjs";
-import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys,viewportSize,vertexDragDelta} from "./camera.mjs";
+import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys,viewportSize,vertexDragDelta,VERTICAL_PROJECTION} from "./camera.mjs";
 import {bindWorkspace} from "./workspace.mjs";
 import {bindCatalogView} from "./catalog-view.mjs";
 import {bindSceneView} from "./scene-view.mjs";
@@ -186,7 +187,7 @@ const displayedAddress=a=>cutLevel()===null||!cutawayMask(cutLevel(),cutOptions(
 function refreshCutaway(){
   dirty=true;visibilityPreview=null;
   if(!displayedAddress(selected)){selected=[selected[0],selected[1],cutLevel()];selection=[[...selected]];faceSelect.value="upper";sync();}
-  $("cutStatus").textContent=cutCenter?"Centered at "+cutCenter.join(", "):"Global cutaway";
+  $("cutStatus").textContent=cutCenter?"Centered at "+cutCenter.join(", "):"Global cutaway";if(selectionMode.value==="surface")sync();
 }
 $("cutaway").onchange=refreshCutaway;
 $("cutRadius").onchange=refreshCutaway;
@@ -402,7 +403,16 @@ function loadActor(){
 $("importObjectBinding").onchange=async()=>{try{const f=$("importObjectBinding").files[0];if(!f)return;if(f.size>32000)throw Error("Binding exceeds 32 KB");await loadBinding(JSON.parse(await f.text()));}catch(e){$("assetStatus").textContent=e.message;}finally{$("importObjectBinding").value="";}};
 $("loadActor").onclick=loadActor;
 $("placeActor").onclick=()=>{try{if(!actor)throw Error("Load a sprite first");const id=crypto.randomUUID();commitObjects([{id,value:{id,address:[...selected],anchor:"surface",visual:activeBinding}}],"Place object");$("objects").value=id;$("objects").dispatchEvent(new Event("change",{bubbles:true}));$("message").textContent="Object placed";}catch(e){$("message").textContent=e.message;}};
-const faceSelect=$("surface"),vertexSelect=$("vertex");
+const faceSelect=$("surface"),vertexSelect=$("vertex"),selectionMode=$("selectionMode");
+const surfaceMode=()=>selectionMode.value==="surface"&&$("paintTool").value==="select"&&cutLevel()===null;
+const sculptOptions=()=>({levels:LEVELS,connected:$("connected").checked,whole:$("sculptWhole").checked,allowed:a=>displayedAddress(a)&&domain.some(b=>b.every((v,i)=>v===a[i]))});
+let surfaceCache=null,hoverColumn=null;
+function currentSurface(){
+  const k=selected.slice(0,2).join(",");
+  if(surfaceCache?.owner===world&&surfaceCache.rev===world.geometryRevision&&surfaceCache.key===k)return surfaceCache;
+  let profile=null,error="";try{profile=surfaceColumn(world,selected,LEVELS);if(!profile)error="No solid surface; use cell mode to create terrain";}catch(e){error=e.message;}
+  return surfaceCache={owner:world,rev:world.geometryRevision,key:k,profile,error};
+}
 const activeFace=()=>faceSelect.value;
 const refs=()=>faceHandles(activeFace());
 const activeRef=()=>refs().find(h=>handleKey(h)===vertexSelect.value)??refs()[0];
@@ -417,9 +427,12 @@ function selectAddress(a,key,extend=false){try{selection=mergeSelection(selectio
 function commitCells(edits,label){if(history.apply(edits,label,gesture))dirty=true;sync();}
 function commitObjects(entities,label,edits=[]){const plan=makeEditPlan(world,edits,label,entities);if(applyEditPlan(world,history,plan)){dirty||=edits.length>0;for(const e of entities)playback.delete(e.id);}sync();}
 function editSelected(fn,label="Selection edit"){commitCells(selection.map(address=>({address,value:fn(world.get(...address),address)})),label);}
-function replayEdit(undo){try{if(drag?.brush)throw Error("Finish or cancel brush stroke first");const label=undo?history.undo():history.redo();if(label){dirty=true;playback.clear();sync();$("historyStatus").textContent=(undo?"Undid ":"Redid ")+label;}}catch(e){$("historyStatus").textContent=e.message;}}
+function replayEdit(undo){try{if(drag?.brush||drag?.sculpt)throw Error("Finish or cancel brush stroke first");const label=undo?history.undo():history.redo();if(label){dirty=true;playback.clear();sync();$("historyStatus").textContent=(undo?"Undid ":"Redid ")+label;}}catch(e){$("historyStatus").textContent=e.message;}}
 $("undoEdit").onclick=()=>replayEdit(true);$("redoEdit").onclick=()=>replayEdit(false);
 function selectFace(key){faceSelect.value=key;sync();}
+function selectSurface(address){
+  try{const p=surfaceColumn(world,address,LEVELS);if(!p)throw Error("No solid surface");selected=[...p.address];selection=[[...selected]];faceSelect.value="upper";sync();$("sculptStatus").textContent="Drag exposed surface vertices; release to apply; Escape cancels";}catch(e){$("sculptStatus").textContent=e.message;}
+}
 
 const get=()=>world.get(...selected).shape;
 function reset(){
@@ -451,6 +464,8 @@ function sync(){
   $("cellTags").value=c.components?.interaction_tags?.join(", ")??"";
   const water=c.components?.water;$("waterFill").value=water?.fill??0;$("waterFlowX").value=water?.flow_ft_s[0]??0;$("waterFlowY").value=water?.flow_ft_s[1]??0;$("waterFixed").checked=water?.fixed===true;
   $("waterStatus").textContent=water?.fill?((water.fill*grid.vertical_ft).toFixed(2)+" ft above cell base"):"Dry cell";
+  const sculpt=surfaceMode(),surfaceSelected=selectionMode.value==="surface"&&$("paintTool").value==="select";faceSelect.disabled=surfaceSelected;slider.disabled||=surfaceSelected;vertexSelect.disabled=surfaceSelected;$("sculptWhole").disabled=!sculpt;
+  if(selectionMode.value==="surface"){$("sculptStatus").textContent=sculpt?(currentSurface().error||"Drag exposed surface vertices; release to apply; Escape cancels"):"Surface mode requires Select and full world view";}
   syncConstruction();
 }
 function move(value,ref=activeRef()){
@@ -518,6 +533,8 @@ function demoSurface(kind){
 }
 $("transitionDemo").onchange=()=>{const k=$("transitionDemo").value;if(k)demoSurface(k);$("transitionDemo").value="";};
 $("reset").onclick=()=>{if(worldMode!=="island"&&!confirm("Reset world and discard edits?"))return;reset();};
+selectionMode.onchange=()=>{hoverColumn=null;if(surfaceMode())selectSurface(selected);sync();};
+$("paintTool").addEventListener("change",sync);
 $("surface").onchange=sync;$("vertex").onchange=sync;$("connected").onchange=sync;$("height").oninput=()=>move(Number($("height").value));bindGesture($("height"));
 const presets={Full:[1,1,1,1,1,1,1],Half:[.5,.5,.5,.5,.5,.5,.5],Slope:[1,1,.5,0,0,.5,.5],Corner:[1,0,1,1,1,1,1],Peak:[0,0,0,0,0,0,1],Basin:[1,1,1,1,1,1,0],Empty:[0,0,0,0,0,0,0]};
 for(const [name,h] of Object.entries(presets)){const b=document.createElement("button");b.textContent=name;b.title="Replace all selected cells";b.onclick=()=>set({lower:Array(7).fill(0),upper:h.map(v=>Math.round(v*grid.geometry_subdivisions))});$("presets").append(b);}
@@ -543,7 +560,8 @@ function pos(e){const b=canvas.getBoundingClientRect();return [(e.clientX-b.left
 
 function bindGesture(el){el.addEventListener("pointerdown",()=>gesture={});for(const event of ["pointerup","pointercancel","change","blur"])el.addEventListener(event,()=>gesture=null);}
 function pickCell(x,y){
-  const hit=pickFace(visibleCache?.faces??faces,x,y,view);if(hit)return {address:hit.address,key:faceKey(hit)};
+  const visible=visibleCache?.faces??faces,locked=selectionMode.value==="layer"&&$("paintTool").value==="select";
+  const hit=pickFace(locked?visible.filter(f=>f.address[2]===selected[2]):visible,x,y,view);if(hit)return {address:hit.address,key:faceKey(hit)};
   const corners=vertices(uniformShape(0),grid).upper.slice(0,6);
   for(const a of domain){if(a[2]!==selected[2]||!displayedAddress(a)||hasVolume(world.get(...a).shape))continue;path(corners.map(p=>projectLocal(a,p)));if(ctx.isPointInPath(x,y))return {address:a,key:"upper"};}
   return null;
@@ -573,6 +591,11 @@ function finishBrush(commit){const stroke=drag;drag=null;gesture=null;if(!stroke
   if(stroke.edits.length||stroke.objects.length){try{const plan={schema:"smi-hex-edit-plan/1",world_id:world.config.id,label:"Paint "+stroke.mode,edits:stroke.edits,entities:stroke.objects};if(applyEditPlan(world,history,plan)){dirty||=stroke.edits.length>0;for(const e of stroke.objects)playback.delete(e.id);}sync();$("planStatus").textContent="Stroke applied";}catch(e){$("planStatus").textContent=e.message;}}
 }
 canvas.onpointerdown=e=>{const [x,y]=pos(e);if(e.button===1||e.button===2){e.preventDefault();drag={id:e.pointerId,pan:true,x,y,panX,panY};canvas.setPointerCapture(e.pointerId);return;}if(e.button!==0)return;canvas.focus({preventScroll:true});const extend=e.shiftKey||e.ctrlKey||e.metaKey;const painting=$("paintTool").value!=="select",radius=Number($("brushRadius").value),handle=painting||extend||radius>0?null:nearestHandle(handles,x,y,vertexSelect.value);
+  if(selectionMode.value==="surface"&&$("paintTool").value==="select"&&!surfaceMode()){$("sculptStatus").textContent="Switch to full world view or individual cell mode";return;}
+  if(surfaceMode()){
+    if(handle&&currentSurface().profile){const p=currentSurface().profile;drag={id:e.pointerId,sculpt:true,owner:world,rev:world.geometryRevision,y,h:p.heights[handle.index],index:handle.index,address:[...selected],options:sculptOptions(),plan:null,target:p.heights[handle.index]};canvas.setPointerCapture(e.pointerId);return;}
+    const hit=pickCell(x,y);if(hit)selectSurface(hit.address);return;
+  }
   if(handle){vertexSelect.value=handleKey(handle);sync();gesture={};drag={id:e.pointerId,y,h:get()[handle.layer][handle.index],ref:{layer:handle.layer,index:handle.index}};canvas.setPointerCapture(e.pointerId);return;}
   const hit=pickCell(x,y);if(!hit)return;
   if(painting||radius>0){
@@ -580,12 +603,36 @@ canvas.onpointerdown=e=>{const [x,y]=pos(e);if(e.button===1||e.button===2){e.pre
   }
   selectAddress(hit.address,hit.key,extend);
 };
-canvas.onpointermove=e=>{if(drag?.id!==e.pointerId)return;if(drag.brush){try{brushAt(pickCell(...pos(e)));}catch(err){finishBrush(false);$("planStatus").textContent=err.message;}return;}if(drag.pan){const [x,y]=pos(e);panX=drag.panX+x-drag.x;panY=drag.panY+y-drag.y;return;}move(drag.h+vertexDragDelta(drag.y-pos(e)[1],scale,grid),drag.ref);};
+function finishSculpt(commit){
+  const stroke=drag;drag=null;gesture=null;if(!stroke?.sculpt)return;
+  if(!commit){$("sculptStatus").textContent="Surface sculpt canceled";return;}
+  if(!stroke.plan)return;
+  try{
+    if(world!==stroke.owner||world.geometryRevision!==stroke.rev)throw Error("Terrain changed during sculpt; retry");
+    const plan=planSurfaceSculpt(world,stroke.address,stroke.index,stroke.target,stroke.options);
+    if(JSON.stringify(plan)!==JSON.stringify(stroke.plan))throw Error("Surface changed during sculpt; retry");
+    if(applyEditPlan(world,history,plan))dirty=true;
+    const p=surfaceColumn(world,stroke.address,LEVELS);if(p){selected=[...p.address];selection=[[...selected]];}
+    sync();$("sculptStatus").textContent="Surface sculpt applied";
+  }catch(e){$("sculptStatus").textContent=e.message;}
+}
+canvas.onpointermove=e=>{
+  if(!drag){if(surfaceMode()){const hit=pickCell(...pos(e));hoverColumn=null;if(hit)try{hoverColumn=surfaceColumn(world,hit.address,LEVELS)?.address??null;}catch{}}else hoverColumn=null;return;}
+  if(drag.id!==e.pointerId)return;
+  if(drag.sculpt){
+    const target=Math.round(drag.h+vertexDragDelta(drag.y-pos(e)[1],scale,grid));
+    if(target===drag.target)return;drag.target=target;drag.plan=null;
+    try{if(world!==drag.owner||world.geometryRevision!==drag.rev)throw Error("Terrain changed during sculpt; retry");
+      drag.plan=planSurfaceSculpt(world,drag.address,drag.index,target,drag.options);$("sculptStatus").textContent=(target*grid.vertical_ft/grid.geometry_subdivisions)+" ft elevation · "+drag.plan.edits.length+" cells proposed";
+    }catch(err){$("sculptStatus").textContent=err.message;}return;
+  }
+  if(drag.brush){try{brushAt(pickCell(...pos(e)));}catch(err){finishBrush(false);$("planStatus").textContent=err.message;}return;}if(drag.pan){const [x,y]=pos(e);panX=drag.panX+x-drag.x;panY=drag.panY+y-drag.y;return;}move(drag.h+vertexDragDelta(drag.y-pos(e)[1],scale,grid),drag.ref);};
+canvas.onpointerleave=()=>{hoverColumn=null;};
 canvas.oncontextmenu=e=>e.preventDefault();
-canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=Math.max(12,Math.min(48,scale*Math.exp(-e.deltaY*.001))),ratio=next/scale;panX=x-canvas.width/2-(x-canvas.width/2-panX)*ratio;panY=y-canvas.height/2-(y-canvas.height/2-panY)*ratio;scale=next;$("zoom").value=String(next);},{passive:false});
+canvas.addEventListener("wheel",e=>{e.preventDefault();if(drag?.sculpt)return;const [x,y]=pos(e),next=Math.max(12,Math.min(48,scale*Math.exp(-e.deltaY*.001))),ratio=next/scale;panX=x-canvas.width/2-(x-canvas.width/2-panX)*ratio;panY=y-canvas.height/2-(y-canvas.height/2-panY)*ratio;scale=next;$("zoom").value=String(next);},{passive:false});
 $("resetView").onclick=()=>{turn=null;renderYaw=yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
-canvas.onpointerup=()=>{if(drag?.brush)finishBrush(true);else{drag=null;gesture=null;}};
-canvas.onpointercancel=canvas.onlostpointercapture=()=>{if(drag?.brush)finishBrush(false);else{drag=null;gesture=null;}};
+canvas.onpointerup=()=>{if(drag?.sculpt)finishSculpt(true);else if(drag?.brush)finishBrush(true);else{drag=null;gesture=null;}};
+canvas.onpointercancel=canvas.onlostpointercapture=()=>{if(drag?.sculpt)finishSculpt(false);else if(drag?.brush)finishBrush(false);else{drag=null;gesture=null;}};
 function rotateCamera(delta){yaw=wrapYaw(yaw+delta);turn=turnCamera(renderYaw,yaw,performance.now());}
 $("clearSelection").onclick=()=>{selection=[[...selected]];sync();};
 for(const k of Object.keys(catalog.materials))$("paintMaterial").add(new Option(k,k));
@@ -643,7 +690,7 @@ $("applyEditPlan").onclick=()=>{try{if(!stagedPlan)return;if(applyEditPlan(world
 $("discardEditPlan").onclick=()=>{planRequest++;stagedPlan=null;$("applyEditPlan").disabled=true;$("planStatus").textContent="Plan discarded";};
 const shortcuts=new Set(["q","e","w","a","s","d","z","x"]);
 function editableTarget(t){return t?.isContentEditable||["INPUT","SELECT","TEXTAREA"].includes(t?.tagName);}
-window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(k==="escape"&&drag?.brush){finishBrush(false);return;}if(editableTarget(e.target))return;if((e.ctrlKey||e.metaKey)&&!e.altKey&&(k==="z"||k==="y")){e.preventDefault();if(!e.repeat)replayEdit(k==="z"&&!e.shiftKey);return;}if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey&&!e.repeat&&!drag&&e.target===canvas&&workspace.shortcut(k)){e.preventDefault();return;}if(e.ctrlKey||e.metaKey||e.altKey||!shortcuts.has(k))return;e.preventDefault();if((k==="q"||k==="e")&&!e.repeat)rotateCamera(k==="q"?-1:1);else keys.add(k);});
+window.addEventListener("keydown",e=>{const k=e.key.toLowerCase();if(k==="escape"&&drag?.sculpt){finishSculpt(false);return;}if(k==="escape"&&drag?.brush){finishBrush(false);return;}if(editableTarget(e.target))return;if(drag?.sculpt)return;if((e.ctrlKey||e.metaKey)&&!e.altKey&&(k==="z"||k==="y")){e.preventDefault();if(!e.repeat)replayEdit(k==="z"&&!e.shiftKey);return;}if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey&&!e.repeat&&!drag&&e.target===canvas&&workspace.shortcut(k)){e.preventDefault();return;}if(e.ctrlKey||e.metaKey||e.altKey||!shortcuts.has(k))return;e.preventDefault();if((k==="q"||k==="e")&&!e.repeat)rotateCamera(k==="q"?-1:1);else keys.add(k);});
 window.addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
 window.addEventListener("blur",()=>keys.clear());
 document.addEventListener("focusin",e=>{if(editableTarget(e.target))keys.clear();});
@@ -754,7 +801,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     sprites.push({image:r.image,revision:r.revision,emissiveMask:r.emissiveMask,emissive:e.light?.emissive??0,points:flex(billboard(p,renderYaw,s.width,s.height,r.pivot,alignment),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
     if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,height:s.height,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
   }
-  const editPreview=drag?.brush&&drag.transform?drag.edits:stagedPlan?.plan.edits??[];
+  const editPreview=drag?.sculpt?(drag.plan?.edits??[]):drag?.brush&&drag.transform?drag.edits:stagedPlan?.plan.edits??[];
   const conflictKeys=new Set((stagedPlan?.conflicts??[]).filter(c=>c.address).map(c=>c.address.join(",")));
   const objectPreview=drag?.brush?drag.objects:stagedPlan?.plan.entities??[];
   const pendingCells=new Map(editPreview.map(e=>[e.address.join(","),e.value]));
@@ -821,11 +868,14 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     const ring=z=>Array.from({length:24},(_,i)=>view([c.center[0]+c.radius*Math.cos(i*Math.PI/12),c.center[1]+c.radius*Math.sin(i*Math.PI/12),z]));
     const lower=ring(c.bottom),upper=ring(c.top);polygon(lower,null,"#f2b45c");polygon(upper,null,"#f2b45c");for(let i=0;i<24;i+=6){ctx.beginPath();ctx.moveTo(lower[i].x,lower[i].y);ctx.lineTo(upper[i].x,upper[i].y);ctx.strokeStyle="#f2b45c";ctx.stroke();}
   }}catch(e){$("colliderStatus").textContent=e.message;}
-  const v=vertices(get(),grid),key=activeFace();
-  handles=refs().map(h=>({...h,...projectLocal(selected,v[h.layer][h.index])}));
+  const v=vertices(get(),grid),key=activeFace(),sculpt=surfaceMode(),profile=sculpt?currentSurface().profile:null;
+  handles=selectionMode.value==="surface"&&$("paintTool").value==="select"&&!sculpt?[]:sculpt?(profile?profile.heights.map((h,index)=>({layer:"upper",index,...projectLocal([selected[0],selected[1],0],[v.upper[index][0],v.upper[index][1],h*grid.vertical_ft/grid.geometry_subdivisions])})):[]):refs().map(h=>({...h,...projectLocal(selected,v[h.layer][h.index])}));
   // Outline the logical control face even when a neighboring cell clips it.
   // This is an editor overlay, not extra world geometry.
-  if(key.startsWith("side:"))polygon(handles,null,"#f2bd60");
+  if(sculpt){
+    if(hoverColumn&&!drag){const c=world.get(...hoverColumn);if(c&&hasVolume(c.shape))polygon(vertices(c.shape,grid).upper.slice(0,6).map(p=>projectLocal(hoverColumn,p)),null,"#66dfea");}
+    if(drag?.sculpt&&drag.plan){const p=handles.find(h=>h.index===drag.index);if(p){const y=p.y-(drag.target-drag.h)*grid.vertical_ft/grid.geometry_subdivisions*scale*VERTICAL_PROJECTION;ctx.strokeStyle="#66dfea";ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x,y);ctx.stroke();ctx.beginPath();ctx.arc(p.x,y,7,0,Math.PI*2);ctx.stroke();}}
+  }else if(!handles.length){}else if(key.startsWith("side:"))polygon(handles,null,"#f2bd60");
   else{
     polygon(handles.slice(0,6),null,"#f2bd60");
     if($("wire").checked)for(let i=0;i<6;i++)polygon([handles[6],handles[i],handles[(i+1)%6]],null,"#d2e3c3");
@@ -833,7 +883,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   for(const p of [...handles].sort((a,b)=>Number(handleKey(a)===vertexSelect.value)-Number(handleKey(b)===vertexSelect.value))){
     const active=handleKey(p)===vertexSelect.value;
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
-    ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
+    ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((sculpt?"S":p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
   }
   if($("measureCell").checked){
     // Reference prism, not the current deformed surface. Choose the opposite
@@ -855,7 +905,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const gpuStats=gpu.diagnostics(),gpuSamples=gpu.takeTimingSamples();
   profileSamples.add(timing,gpuStats,gpuSamples);captureFrame(ms,timing,gpuStats,gpuSamples);
   if(ms-profileAt>=500){profileAt=ms;profileFrame={...profileSamples.summary(),...gpuStats,...phasePool.diagnostics()};profileSamples=new FrameSamples();$("performanceStatus").textContent=JSON.stringify(profileFrame);}
-  workspace.update({selected,performance:profileFrame,quality});$("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,precipitation_instances:weatherSprites.length,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,point_shadow:pointShadow.diagnostics,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,emissive_mask_instances:maskedObjects,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,preview_sprites:ghostSprites.length,preview_omitted:previewOmitted,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  workspace.update({selected,performance:profileFrame,quality});$("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),selection_mode:selectionMode.value,surface_heights:profile?.heights??null,vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,precipitation_instances:weatherSprites.length,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,point_shadow:pointShadow.diagnostics,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,emissive_mask_instances:maskedObjects,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,preview_sprites:ghostSprites.length,preview_omitted:previewOmitted,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
