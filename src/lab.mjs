@@ -5,7 +5,7 @@ import {buildWaterSurfaces,stepWater,waterTicks} from "./water.mjs";
 import {decorateTerrain} from "./surface-render.mjs";
 import {faceKey,faceHandles,handleKey,handleLabel,nearestHandle,selectionEdges,selectionBrush,mergeSelection,CellEditHistory,makeEditPlan,inspectEditPlan,applyEditPlan,cellShape,cellMaterial,cellWater,hexStroke,exportBuildContext} from "./editor.mjs";
 import {entityOccupancy,planObjectPlacement,planGrove,planGrade,planPath,planWoodlandClearing,planWeatherExposure} from "./builder.mjs";
-import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys,viewportSize} from "./camera.mjs";
+import {project,pickFace,billboard,visibleTriangle,wrapYaw,turnCamera,sampleTurn,cameraKeys,viewportSize,vertexDragDelta} from "./camera.mjs";
 import {bindWorkspace} from "./workspace.mjs";
 import {bindCatalogView} from "./catalog-view.mjs";
 import {bindSceneView} from "./scene-view.mjs";
@@ -535,7 +535,6 @@ $("load").onchange=async()=>{try{
 }catch(e){$("message").textContent=e.message;}finally{$("load").value="";}};
 $("mode").onchange=()=>clock.configure($("mode").value);$("step").onclick=()=>{const before=clock.simulation;clock.advance(6);simulate(clock.simulation-before);};function addFire(definition){world.putEffect({id:crypto.randomUUID(),kind:"fire",address:[...selected],instance:effect(definition,clock.simulation)});}
 $("fire").onclick=()=>addFire({behavior:"persistent"});$("timed").onclick=()=>addFire({behavior:"timed",duration:5});$("rotate").onclick=()=>rotateCamera(1);$("zoom").oninput=()=>scale=Number($("zoom").value);
-const verticalScale=Math.sqrt(2/3);
 function view(p){return project(p,camera());}
 function projectLocal(a,p){const o=physicalPosition(...a,grid);return view([o.x+p[0],o.y+p[1],o.z+p[2]]);}
 function path(p){ctx.beginPath();p.forEach(({x,y},i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();}
@@ -581,7 +580,7 @@ canvas.onpointerdown=e=>{const [x,y]=pos(e);if(e.button===1||e.button===2){e.pre
   }
   selectAddress(hit.address,hit.key,extend);
 };
-canvas.onpointermove=e=>{if(drag?.id!==e.pointerId)return;if(drag.brush){try{brushAt(pickCell(...pos(e)));}catch(err){finishBrush(false);$("planStatus").textContent=err.message;}return;}if(drag.pan){const [x,y]=pos(e);panX=drag.panX+x-drag.x;panY=drag.panY+y-drag.y;return;}move(drag.h+(drag.y-pos(e)[1])/(scale*verticalScale*grid.vertical_ft/grid.geometry_subdivisions),drag.ref);};
+canvas.onpointermove=e=>{if(drag?.id!==e.pointerId)return;if(drag.brush){try{brushAt(pickCell(...pos(e)));}catch(err){finishBrush(false);$("planStatus").textContent=err.message;}return;}if(drag.pan){const [x,y]=pos(e);panX=drag.panX+x-drag.x;panY=drag.panY+y-drag.y;return;}move(drag.h+vertexDragDelta(drag.y-pos(e)[1],scale,grid),drag.ref);};
 canvas.oncontextmenu=e=>e.preventDefault();
 canvas.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pos(e),next=Math.max(12,Math.min(48,scale*Math.exp(-e.deltaY*.001))),ratio=next/scale;panX=x-canvas.width/2-(x-canvas.width/2-panX)*ratio;panY=y-canvas.height/2-(y-canvas.height/2-panY)*ratio;scale=next;$("zoom").value=String(next);},{passive:false});
 $("resetView").onclick=()=>{turn=null;renderYaw=yaw=0;scale=24;panX=0;panY=50;$("zoom").value=24;};
@@ -835,6 +834,22 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     const active=handleKey(p)===vertexSelect.value;
     ctx.beginPath();ctx.arc(p.x,p.y,active?7:4.5,0,Math.PI*2);ctx.fillStyle=active?"#f2bd60":p.layer==="upper"?"#e0efcf":"#8fc9ed";ctx.fill();ctx.strokeStyle="#243a4a";ctx.stroke();
     ctx.fillStyle="#fff";ctx.font="12px system-ui";ctx.fillText((p.layer==="upper"?"U":"L")+(p.index===6?"C":p.index+1),p.x+7,p.y+(p.layer==="upper"?-8:13));
+  }
+  if($("measureCell").checked){
+    // Reference prism, not the current deformed surface. Choose the opposite
+    // edge axis with the greatest screen separation for a readable width.
+    const reference=vertices(uniformShape(grid.geometry_subdivisions),grid),mid=i=>reference.upper[i].map((v,k)=>(v+reference.upper[(i+1)%6][k])/2);
+    const axes=[0,1,2].map(i=>[mid(i),mid(i+3)]).map(pair=>({pair,screen:pair.map(p=>projectLocal(selected,p))}));
+    axes.sort((a,b)=>Math.abs(b.screen[1].x-b.screen[0].x)-Math.abs(a.screen[1].x-a.screen[0].x));
+    const {pair,screen}=axes[0],right=screen[0].x>screen[1].x?0:1,top=pair[right],bottom=projectLocal(selected,[top[0],top[1],0]);
+    ctx.save();ctx.lineWidth=2;ctx.font="bold 12px system-ui";ctx.textBaseline="middle";
+    function dimension(a,b,label,color,dx,dy){
+      ctx.strokeStyle=color;ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      for(const p of [a,b]){ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();}
+      const x=(a.x+b.x)/2+dx,y=(a.y+b.y)/2+dy;ctx.strokeStyle="#13202b";ctx.lineWidth=4;ctx.strokeText(label,x,y);ctx.fillText(label,x,y);ctx.lineWidth=2;
+    }
+    dimension(screen[0],screen[1],grid.horizontal_ft+" ft width","#9ce6de",-20,-12);
+    dimension(screen[right],bottom,grid.vertical_ft+" ft height","#ffd092",9,0);ctx.restore();
   }
   const timing={frame_ms:performance.now()-started,frame_interval_ms:interval,terrain_ms:terrainMS,sprites_ms:spriteMS,shadow_ms:shadowMS,render_ms:renderMS};
   const gpuStats=gpu.diagnostics(),gpuSamples=gpu.takeTimingSamples();

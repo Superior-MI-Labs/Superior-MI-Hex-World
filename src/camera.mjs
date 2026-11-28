@@ -6,10 +6,12 @@ export function viewportSize(width,height,{maxWidth=1600,maxHeight=1000,maxPixel
   const factor=Math.min(1,maxWidth/width,maxHeight/height,Math.sqrt(maxPixels/(width*height)));
   return {width:Math.max(1,Math.floor(width*factor)),height:Math.max(1,Math.floor(height*factor))};
 }
+export const VERTICAL_PROJECTION=Math.sqrt(2/3);
+export function vertexDragDelta(dy,scale,grid){return dy/(scale*VERTICAL_PROJECTION*grid.vertical_ft/grid.geometry_subdivisions);}
 export const cameraAngle=(yaw,alignment_deg=0)=>(yaw*60+alignment_deg)*Math.PI/180;
 export function project([x,y,z],{yaw=0,alignment_deg=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
   const a=cameraAngle(yaw,alignment_deg),c=Math.cos(a),s=Math.sin(a),v=x*s+y*c;
-  return {x:width/2+panX+scale*(x*c-y*s),y:height/2+panY+scale*(v/Math.sqrt(3)-z*Math.sqrt(2/3)),depth:v*Math.sqrt(2/3)+z/Math.sqrt(3)};
+  return {x:width/2+panX+scale*(x*c-y*s),y:height/2+panY+scale*(v/Math.sqrt(3)-z*VERTICAL_PROJECTION),depth:v*VERTICAL_PROJECTION+z/Math.sqrt(3)};
 }
 export function pickFace(faces,x,y,view){
   let best=null,depth=-Infinity;
@@ -39,7 +41,7 @@ export function visibleTriangle(face,view,width,height,padding=0){
 // Inverse of the orthographic projection on a specified world-height plane.
 export function unprojectPlane(x,y,z,{yaw=0,alignment_deg=0,scale=24,width=900,height=450,panX=0,panY=50}={}){
   if(!Number.isFinite(scale)||scale<=0)throw Error("Invalid camera scale");
-  const u=(x-width/2-panX)/scale,v=((y-height/2-panY)/scale+z*Math.sqrt(2/3))*Math.sqrt(3);
+  const u=(x-width/2-panX)/scale,v=((y-height/2-panY)/scale+z*VERTICAL_PROJECTION)*Math.sqrt(3);
   const a=cameraAngle(yaw,alignment_deg),c=Math.cos(a),s=Math.sin(a);
   return [u*c+v*s,-u*s+v*c,z];
 }

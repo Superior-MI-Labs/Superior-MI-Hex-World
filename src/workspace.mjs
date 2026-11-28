@@ -55,7 +55,8 @@ export function bindWorkspace(){
   toggle.addEventListener("click",()=>setInspector(!root.classList.contains("inspector-hidden")));
   focus.addEventListener("click",()=>setFocus(!root.classList.contains("focus-world")));exit.addEventListener("click",()=>setFocus(false));
   document.getElementById("showViewSettings").addEventListener("click",()=>openPanel("viewPanel"));
-  const ready=document.getElementById("workspaceReady"),selection=document.getElementById("workspaceSelection"),perf=document.getElementById("workspacePerf");
+  const ready=document.getElementById("workspaceReady"),selection=document.getElementById("workspaceSelection"),perf=document.getElementById("workspacePerf"),planStatus=document.getElementById("planStatus");
+  new MutationObserver(()=>{planStatus.title=planStatus.textContent;}).observe(planStatus,{childList:true,characterData:true,subtree:true});
   return {openPanel,openDock,activateTool,shortcut,closeDock:()=>setDock(false),update:({selected,performance,quality})=>{
     const write=(el,value)=>{if(el.textContent!==value)el.textContent=value;};
     write(ready,"Ready");write(selection,"Q "+selected[0]+" · R "+selected[1]+" · Z "+selected[2]);

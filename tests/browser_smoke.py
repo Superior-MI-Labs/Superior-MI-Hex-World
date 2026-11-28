@@ -48,6 +48,16 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#scene').width===document.querySelector('#viewport').clientWidth")
     splitter.press("ArrowRight")
     page.wait_for_function("Math.abs(document.querySelector('#viewport').clientWidth-"+str(int(start["width"]))+")<2")
+    handle_box=splitter.bounding_box()
+    sx=handle_box["x"]+handle_box["width"]/2
+    sy=handle_box["y"]+handle_box["height"]/2
+    page.mouse.move(sx,sy)
+    page.mouse.down()
+    page.mouse.move(sx-32,sy,steps=3)
+    page.mouse.up()
+    page.wait_for_function("document.querySelector('#viewport').clientWidth<"+str(int(start["width"])-20))
+    splitter.dblclick()
+    page.wait_for_function("Math.abs(document.querySelector('#viewport').clientWidth-"+str(int(start["width"]))+")<2")
     page.locator("#toggleLibrary").click()
     old_height=page.locator("#assetDock").bounding_box()["height"]
     grip=page.locator("#dockResize")
@@ -58,6 +68,19 @@ with sync_playwright() as p:
     page.wait_for_function("Math.abs(document.querySelector('#assetDock').getBoundingClientRect().height-"+str(int(old_height))+")<2")
     page.locator("#closeLibrary").click()
     page.locator("#scene").focus()
+    page.keyboard.press("b")
+    assert page.locator("#assetDock").is_visible()
+    page.locator("#catalogSearch").focus()
+    page.keyboard.type("f6")
+    assert page.locator("#catalogSearch").input_value()=="f6"
+    assert not page.locator("#workspace").evaluate("(el)=>el.classList.contains('focus-world')")
+    page.locator("#catalogSearch").fill("")
+    page.locator("#closeLibrary").click()
+    page.locator("#scene").focus()
+    page.keyboard.press("f")
+    assert page.locator("#exitFocus").is_visible()
+    page.locator("#exitFocus").click()
+    page.locator("#scene").focus()
     page.keyboard.press("6")
     assert page.locator("#paintTool").input_value()=="water"
     page.locator("#scene").focus()
@@ -65,7 +88,10 @@ with sync_playwright() as p:
     assert page.locator("#paintTool").input_value()=="select"
     page.locator("summary",has_text="Builder painting and edit plans").click()
     page.wait_for_function("document.querySelector('#scene').height===document.querySelector('#viewport').clientHeight")
+    control(page,"#measureCell").check()
+    page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).grid.vertical_ft===5")
     page.screenshot(path="/tmp/hex-world-workspace.png")
+    control(page,"#measureCell").uncheck()
     page.locator('[data-panel="scenePanel"]').click()
     assert page.locator('#sceneObjects [data-entity="demo-actor"]').count()==1
     page.locator("#sceneSearch").fill("missing")
