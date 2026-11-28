@@ -208,8 +208,10 @@ with sync_playwright() as p:
         page.locator(".catalog-advanced > summary").click()
     page.locator("#catalogCards").scroll_into_view_if_needed()
     page.screenshot(path="/tmp/hex-world-library.png")
-    control(page,"#loadCatalogAsset").click()
-    page.locator("#closeLibrary").click()
+    control(page,"#loadAndPaint").click()
+    page.wait_for_function("document.querySelector('#paintTool').value==='objects' && document.querySelector('#assetDock').hidden")
+    assert page.locator("#objectDensity").input_value()=="1"
+    page.locator('[data-tool="select"]').click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
     control(page,"#loadChest").click()
     page.wait_for_function("document.querySelector('#assetStatus').textContent === 'Atlas sprite loaded'")
@@ -352,6 +354,21 @@ with sync_playwright() as p:
     assert liquid["wet"][2]>liquid["wet"][0] and liquid["wet"]!=liquid["dry"],liquid
     assert liquid["blocked"][0]>240 and liquid["blocked"][2]<10,liquid
     assert liquid["wet"]!=liquid["moved"],liquid
+    # Ghosts must use sprite alpha and the same depth buffer as real terrain.
+    ghost=page.evaluate("""async () => {
+      const {createRenderer}=await import('/src/gpu.mjs'),c=document.createElement('canvas');c.width=c.height=32;
+      const r=createRenderer(c),view=([x,y,depth])=>({x,y,depth});
+      const face={kind:'top',color:[0,1,0],points:[[0,0,1],[32,0,1],[0,32,1]]};
+      const img=document.createElement('canvas');img.width=img.height=2;const g=img.getContext('2d');g.fillStyle='red';g.fillRect(0,0,1,2);
+      const a=z=>({image:img,revision:0,points:[[2,2,z],[12,2,z],[12,12,z],[2,12,z]],previewColor:[1,0,0],previewOpacity:.5});
+      r.render([face],view,{pattern:false});const base=r.readPixel(4,5);
+      r.render([face],view,{pattern:false,previews:[a(0)]});const blocked=r.readPixel(4,5);
+      r.render([face],view,{pattern:false,previews:[a(2)]});const front=r.readPixel(4,5),transparent=r.readPixel(11,5);
+      r.render([face],view,{pattern:false});const removed=r.readPixel(4,5);
+      return {base,blocked,front,transparent,removed};
+    }""")
+    assert ghost['blocked']==ghost['base']==ghost['removed'] and ghost['transparent']==ghost['base'],ghost
+    assert 105<ghost['front'][0]<150 and 105<ghost['front'][1]<150,ghost
     # Per-fragment local light illuminates terrain and sprites in world space.
     local_light=page.evaluate("""async () => {
       const {createRenderer}=await import('/src/gpu.mjs');

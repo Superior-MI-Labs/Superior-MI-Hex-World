@@ -35,16 +35,18 @@ export function bindWorkspace(){
   document.getElementById("openAssetLibrary").addEventListener("click",()=>openDock("catalogDock"));
   document.getElementById("openAssetPalette").addEventListener("click",()=>openDock("paletteDock"));
   for(const b of panels)b.addEventListener("click",()=>openPanel(b.dataset.panel));
-  for(const b of toolButtons)b.addEventListener("click",()=>{
-    paint.value=b.dataset.tool;paint.dispatchEvent(new Event("change",{bubbles:true}));syncTool();
+  function activateTool(tool){
+    if(!toolButtons.some(b=>b.dataset.tool===tool))return;
+    paint.value=tool;paint.dispatchEvent(new Event("change",{bubbles:true}));
     const builder=paint.closest("details");builder.open=true;openPanel("terrainPanel");
-  });
+  }
+  for(const b of toolButtons)b.addEventListener("click",()=>activateTool(b.dataset.tool));
   paint.addEventListener("change",syncTool);syncTool();openPanel("terrainPanel");
   toggle.addEventListener("click",()=>setInspector(!root.classList.contains("inspector-hidden")));
   focus.addEventListener("click",()=>setFocus(!root.classList.contains("focus-world")));exit.addEventListener("click",()=>setFocus(false));
   document.getElementById("showViewSettings").addEventListener("click",()=>openPanel("viewPanel"));
   const ready=document.getElementById("workspaceReady"),selection=document.getElementById("workspaceSelection"),perf=document.getElementById("workspacePerf");
-  return {openPanel,openDock,update:({selected,performance,quality})=>{
+  return {openPanel,openDock,activateTool,closeDock:()=>setDock(false),update:({selected,performance,quality})=>{
     const write=(el,value)=>{if(el.textContent!==value)el.textContent=value;};
     write(ready,"Ready");write(selection,"Q "+selected[0]+" · R "+selected[1]+" · Z "+selected[2]);
     write(perf,"WebGL2 · "+(performance.fps??"—")+" FPS · "+quality);
