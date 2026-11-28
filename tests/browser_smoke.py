@@ -40,6 +40,31 @@ with sync_playwright() as p:
     page.set_viewport_size({"width":1200,"height":1000})
     page.wait_for_function("Math.abs(document.querySelector('#viewport').clientWidth-"+str(int(start["width"]))+")<2")
     page.wait_for_function("document.querySelector('#scene').width===document.querySelector('#viewport').clientWidth")
+    # Splitters change the real viewport and the backing canvases together.
+    splitter=page.locator("#inspectorResize")
+    splitter.focus()
+    splitter.press("ArrowLeft")
+    page.wait_for_function("document.querySelector('#viewport').clientWidth<"+str(int(start["width"])))
+    page.wait_for_function("document.querySelector('#scene').width===document.querySelector('#viewport').clientWidth")
+    splitter.press("ArrowRight")
+    page.wait_for_function("Math.abs(document.querySelector('#viewport').clientWidth-"+str(int(start["width"]))+")<2")
+    page.locator("#toggleLibrary").click()
+    old_height=page.locator("#assetDock").bounding_box()["height"]
+    grip=page.locator("#dockResize")
+    grip.focus()
+    grip.press("ArrowUp")
+    page.wait_for_function("document.querySelector('#assetDock').getBoundingClientRect().height>"+str(int(old_height)))
+    grip.dblclick()
+    page.wait_for_function("Math.abs(document.querySelector('#assetDock').getBoundingClientRect().height-"+str(int(old_height))+")<2")
+    page.locator("#closeLibrary").click()
+    page.locator("#scene").focus()
+    page.keyboard.press("6")
+    assert page.locator("#paintTool").input_value()=="water"
+    page.locator("#scene").focus()
+    page.keyboard.press("1")
+    assert page.locator("#paintTool").input_value()=="select"
+    page.locator("summary",has_text="Builder painting and edit plans").click()
+    page.wait_for_function("document.querySelector('#scene').height===document.querySelector('#viewport').clientHeight")
     page.screenshot(path="/tmp/hex-world-workspace.png")
     page.locator('[data-panel="scenePanel"]').click()
     assert page.locator('#sceneObjects [data-entity="demo-actor"]').count()==1

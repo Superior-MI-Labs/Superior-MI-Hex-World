@@ -121,6 +121,8 @@ with sync_playwright() as p:
         raise
     page.wait_for_function("JSON.parse(document.querySelector('#status').textContent).builder.preview_sprites===2",timeout=120000)
     assert status()["world_objects"]==before
+    page.locator('[data-panel="scenePanel"]').click()
+    assert page.locator("#applyEditPlan").is_visible() and page.locator("#discardEditPlan").is_visible()
     control(page,"#viewport").screenshot(path=str(out/"woodland-placement-preview.png"))
     with page.expect_download() as staged:
         control(page,"#exportStagedPlan").evaluate("(b)=>b.click()")
