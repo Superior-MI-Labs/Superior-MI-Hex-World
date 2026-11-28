@@ -60,6 +60,7 @@ void main(){
   if(u_mode==2){if(t.a<0.5)discard;color=vec4(spriteLight(t.rgb),1.0);}
   else if(u_mode==3){if(t.a<0.98)discard;color=vec4(spriteLight(t.rgb),1.0);}
   else if(u_mode==4){if(t.a<=0.02||t.a>=0.98)discard;color=vec4(spriteLight(t.rgb),t.a);}
+  else if(u_mode==8){if(t.a<=0.02)discard;color=vec4(mix(t.rgb,v_color,.22),t.a*v_cover.z);}
   else if(u_mode==6){
     float depth=max(0.0,v_cover.z);
     vec2 p=v_world.xy-v_cover.xy*u_water_time;
@@ -200,7 +201,7 @@ export function createRenderer(canvas){
     drawCalls++;gl.bindVertexArray(batch.gpu.vao);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(mode,m);gl.drawArrays(gl.TRIANGLES,0,batch.count);
     gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   }
-  function render(faces,view,{projectionKey=null,cacheStaticTerrain=true,selected=null,pattern=true,sprites=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],pointShadow=null,softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
+  function render(faces,view,{projectionKey=null,cacheStaticTerrain=true,selected=null,pattern=true,sprites=[],previews=[],sprite:actor=null,transitions={},debug=false,style=null,lighting=style?.lighting??null,pointLights=[],pointShadow=null,softSprites=false,shadows=[],water=[],selectionWalls=[],visualTime=0}={}){
     const query=beginTiming();
     // Keep the auxiliary sampler complete even when a previous masked sprite was evicted.
     gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,ground);gl.activeTexture(gl.TEXTURE0);
@@ -223,10 +224,10 @@ export function createRenderer(canvas){
     terrainUploads=0;terrainCacheHit=false;drawCalls=0;spriteUploads=0;spriteEvictions=0;spriteFrame++;
     const reusable=projectionKey!==null&&projectionCache?.key===projectionKey&&projectionCache.faces===faces;
     if(!reusable){const projected=faces.map(f=>({f,p:f.points.map(view)}));let low=Infinity,high=-Infinity;for(const f of projected)for(const p of f.p){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}projectionCache={key:projectionKey,faces,projected,low,high};}
-    const projected=projectionCache.projected,actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)}));
+    const projected=projectionCache.projected,actors=[...sprites,...(actor?[actor]:[])].map(a=>({actor:a,quad:a.points.map(view)})),ghosts=debug?[]:previews.map(a=>({actor:a,quad:a.points.map(view)}));
     const waterProjected=water.map(f=>({f,p:f.points.map(view)})),walls=selectionWalls.map(f=>({f,p:f.points.map(view)}));
     let {low,high}=projectionCache;
-    for(const a of actors)for(const p of a.quad){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
+    for(const items of [actors,ghosts])for(const a of items)for(const p of a.quad){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
     for(const items of [waterProjected,walls])for(const {p:points} of items)for(const p of points){low=Math.min(low,p.depth);high=Math.max(high,p.depth);}
     if(!Number.isFinite(low)){low=0;high=1;}
     // Stable padded bounds avoid repacking terrain for small sprite motion.
@@ -273,7 +274,7 @@ export function createRenderer(canvas){
       if(!texturePairs.has(tex))texturePairs.set(tex,new Map());const pairs=texturePairs.get(tex);
       if(!pairs.has(mask))pairs.set(mask,{tex,mask});return pairs.get(mask);
     }
-    function packSprite(batch,actor,quad){for(const i of [0,1,2,0,2,3])pack(batch,quad[i],spriteTint,uv[i],[actor.emissive??0,actor.emissiveMask?1:0,0],undefined,undefined,undefined,1,actor.points[i]);}
+    function packSprite(batch,actor,quad){for(const i of [0,1,2,0,2,3])pack(batch,quad[i],actor.previewColor??spriteTint,uv[i],[actor.emissive??0,actor.emissiveMask?1:0,actor.previewOpacity??0],undefined,undefined,undefined,1,actor.points[i]);}
     function drawSprite(batch,pair,m){
       gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,pair.mask??ground);gl.activeTexture(gl.TEXTURE0);
       draw(batch,pair.tex,m);
@@ -298,6 +299,13 @@ export function createRenderer(canvas){
       waterProjected.sort((a,b)=>a.p.reduce((s,p)=>s+p.depth,0)-b.p.reduce((s,p)=>s+p.depth,0));
       for(const {f,p} of waterProjected)for(let i=0;i<3;i++)pack(data,p[i],[1,1,1],[0,0],[...f.flow,f.depth[i]],f.kind==="water-side"?0:-1,undefined,undefined,shade,f.points[i]);
       gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,ground,6);gl.depthMask(true);gl.disable(gl.BLEND);
+    }
+    // Same qualified texture/vertex path, depth-tested without writing depth.
+    if(ghosts.length){
+      gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+      const ordered=ghosts.map(a=>({...a,depth:a.quad.reduce((s,p)=>s+p.depth,0)})).sort((a,b)=>a.depth-b.depth);
+      let current=null,batch=[];for(const {actor,quad} of ordered){const pair=spritePair(actor);if(pair!==current){if(current)drawSprite(batch,current,8);current=pair;batch=[];}packSprite(batch,actor,quad);}
+      if(current)drawSprite(batch,current,8);gl.depthMask(true);gl.disable(gl.BLEND);
     }
     if(walls.length){const data=[];for(const {f,p} of walls)for(let i=0;i<3;i++)pack(data,p[i],[1,1,1],[0,f.fade[i]]);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);draw(data,ground,7);gl.depthMask(true);gl.disable(gl.BLEND);}
     activeSpriteTextures=used.size;

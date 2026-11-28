@@ -63,7 +63,7 @@ const demoVisual={manifest:"./examples/atlas-character/manifest.json",asset:"smi
 let actor=null,spriteRequest=0,art=null,activeBinding=demoVisual;
 const palette=new Map();let paletteRequest=0;
 function refreshPalette(){const host=$("assetPalette");host.replaceChildren();for(const [key,v] of palette){const b=document.createElement("button"),thumb=document.createElement("canvas");b.type="button";b.title=v.binding.asset;thumb.width=48;thumb.height=48;thumb.style.cssText="width:48px;height:48px;vertical-align:middle;border:0";const w=v.image.width,h=v.image.height,s=Math.min(48/w,48/h);thumb.getContext("2d").drawImage(v.image,(48-w*s)/2,(48-h*s)/2,w*s,h*s);b.append(thumb,document.createTextNode(" "+v.binding.asset));b.onclick=()=>loadBinding(v.binding);host.append(b);}}
-$("pinAsset").onclick=()=>{if(!actor)return;paletteRequest++;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
+$("pinAsset").onclick=()=>{if(!actor||$("paintLoadedAsset").disabled)return;paletteRequest++;const key=visualKey(activeBinding);if(!palette.has(key)&&palette.size>=24){$("paletteStatus").textContent="Palette limit 24";return;}palette.set(key,{binding:structuredClone(activeBinding),image:actor.image});refreshPalette();$("paletteStatus").textContent=palette.size+" pinned assets";};
 $("clearPalette").onclick=()=>{paletteRequest++;palette.clear();refreshPalette();$("paletteStatus").textContent="Palette cleared";};
 $("exportPalette").onclick=()=>downloadJSON([...palette.values()].map(v=>v.binding),"hex-asset-palette.json");
 $("importPalette").onchange=async()=>{
@@ -313,9 +313,9 @@ async function qualifyBinding(raw){
   return {binding,next};
 }
 async function loadBinding(raw){
-  const request=++spriteRequest;$("assetStatus").textContent="Loading sprite";$("loadedAsset").textContent="Loading "+(raw.asset??"asset")+"…";$("placeActor").disabled=true;
-  try{const resolved=await resolveAtlasBinding(raw),{binding,next}=await qualifyBinding(resolved.binding);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("loadedAsset").textContent=binding.asset+" · "+binding.height_ft+" ft";$("placeActor").disabled=false;$("assetStatus").textContent="Atlas sprite loaded";$("spatialStatus").textContent=resolved.warnings.join("; ")||("Height "+binding.height_ft+" ft · "+(binding.views?"6 views":"billboard")+(binding.wind?" · wind-responsive":"")+(next.emissiveMask?" · emissive mask":""));}
-  catch(e){if(request===spriteRequest){actor=null;$("loadedAsset").textContent="Asset unavailable: "+e.message;$("placeActor").disabled=true;$("assetStatus").textContent=e.message;$("spatialStatus").textContent="";}}
+  const request=++spriteRequest;$("assetStatus").textContent="Loading sprite";$("loadedAsset").textContent="Loading "+(raw.asset??"asset")+"…";$("placeActor").disabled=$("paintLoadedAsset").disabled=true;
+  try{const resolved=await resolveAtlasBinding(raw),{binding,next}=await qualifyBinding(resolved.binding);if(request!==spriteRequest)return;actor=next;activeBinding=binding;$("loadedAsset").textContent=binding.asset+" · "+binding.height_ft+" ft";$("placeActor").disabled=$("paintLoadedAsset").disabled=false;$("assetStatus").textContent="Atlas sprite loaded";$("spatialStatus").textContent=resolved.warnings.join("; ")||("Height "+binding.height_ft+" ft · "+(binding.views?"6 views":"billboard")+(binding.wind?" · wind-responsive":"")+(next.emissiveMask?" · emissive mask":""));return true;}
+  catch(e){if(request===spriteRequest){actor=null;$("loadedAsset").textContent="Asset unavailable: "+e.message;$("placeActor").disabled=$("paintLoadedAsset").disabled=true;$("assetStatus").textContent=e.message;$("spatialStatus").textContent="";}}
 }
 let appearanceRequest=0,appearanceKey=null,inspectRequest=0;
 function syncAppearance(){
@@ -357,7 +357,7 @@ function refreshCatalog(){
   catalogMatches=searchCatalog(catalogEntries,$("catalogSearch").value,$("catalogCapability").value,$("catalogComponents").checked,$("catalogDomain").value,browse);
   const menu=$("catalogAssets"),previous=menu.value;menu.replaceChildren(...catalogMatches.map(a=>new Option(a.name+" · "+a.domain+(a.family?" · "+a.family:"")+" · "+a.license+" · art review: "+a.visual_qa,a.id)));
   if(catalogMatches.some(a=>a.id===previous))menu.value=previous;
-  $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=!catalogMatches.length;catalogView.update(catalogMatches);
+  $("catalogStatus").textContent=catalogMatches.length+" shown (maximum 200); actual archive validated on load";$("loadCatalogAsset").disabled=$("loadAndPaint").disabled=!catalogMatches.length;catalogView.update(catalogMatches);
 }
 $("refreshCatalog").onclick=async()=>{
   const request=++catalogRequest;$("catalogStatus").textContent="Loading Atlas catalog";
@@ -370,7 +370,19 @@ $("refreshCatalog").onclick=async()=>{
   }catch(e){if(request===catalogRequest)$("catalogStatus").textContent=e.message;}
 };
 for(const k of ["catalogSearch","catalogCapability","catalogComponents","catalogDomain",...Object.values(browseMenus)])$(k).oninput=refreshCatalog;
-$("loadCatalogAsset").onclick=()=>{const a=catalogMatches.find(e=>e.id===$("catalogAssets").value);if(a){const {height_ft,...source}=a.binding;loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);}};
+function activateAssetBrush(){
+  if(!actor||$("paintLoadedAsset").disabled||drag)return;
+  $("usePalette").checked=false;$("objectDensity").value="1";workspace.closeDock();workspace.activateTool("objects");canvas.focus({preventScroll:true});
+}
+$("paintLoadedAsset").onclick=activateAssetBrush;
+async function loadCatalogSelection(paint=false){
+  const a=catalogMatches.find(e=>e.id===$("catalogAssets").value);if(!a)return;
+  const {height_ft,...source}=a.binding,owner=world,previousTool=$("paintTool").value;
+  const loaded=await loadBinding($("overrideCatalogHeight").checked?{...source,height_ft:Number($("objectHeight").value)}:source);
+  if(paint&&loaded&&world===owner&&$("paintTool").value===previousTool&&$("catalogAssets").value===a.id&&$("assetDock").getClientRects().length&&$("catalogDock").getClientRects().length)activateAssetBrush();
+}
+$("loadCatalogAsset").onclick=()=>loadCatalogSelection();
+$("loadAndPaint").onclick=()=>loadCatalogSelection(true);
 
 $("applyAppearance").onclick=async()=>{
   const id=$("objects").value,e=world.getEntity(id),request=++appearanceRequest,owner=world;if(!e)return;
@@ -584,7 +596,7 @@ async function qualifyObjects(entities){const bindings=new Map(entities.filter(e
 let planRequest=0;
 function builderBindings(){
   if($("usePalette").checked){const entries=[...palette.values()].map(v=>v.binding);if(!entries.length)throw Error("Pin assets to the palette first");return entries;}
-  if(!actor)throw Error("Load a qualified asset first");return [activeBinding];
+  if(!actor||$("paintLoadedAsset").disabled)throw Error("Load a qualified asset first");return [activeBinding];
 }
 function stageBuilder(plan,notes=""){
   planRequest++;stagedPlan=inspectEditPlan(world,plan);
@@ -628,7 +640,7 @@ $("previewWoodland").onclick=async()=>{
 };
 $("exportStagedPlan").onclick=()=>{if(stagedPlan)downloadJSON(stagedPlan.plan,"hex-proposed-plan.json");else $("planStatus").textContent="Preview a plan first";};
 $("importEditPlan").onchange=async()=>{const owner=world,request=++planRequest;$("applyEditPlan").disabled=true;stagedPlan=null;try{const f=$("importEditPlan").files[0];if(!f)return;if(f.size>2e6)throw Error("Plan exceeds 2 MB");const raw=JSON.parse(await f.text());if(owner!==world||request!==planRequest)return;const checked=inspectEditPlan(world,raw);await qualifyObjects(checked.plan.entities??[]);if(owner!==world||request!==planRequest)return;stageBuilder(raw);}catch(e){if(owner===world&&request===planRequest){stagedPlan=null;$("applyEditPlan").disabled=true;$("planStatus").textContent=e.message;}}finally{if(owner===world)$("importEditPlan").value="";}};
-$("applyEditPlan").onclick=()=>{try{if(!stagedPlan)return;if(applyEditPlan(world,history,stagedPlan.plan)){dirty||=stagedPlan.plan.edits.length>0;for(const e of stagedPlan.plan.entities??[])playback.delete(e.id);}stagedPlan=null;$("applyEditPlan").disabled=true;sync();$("planStatus").textContent="Plan applied";}catch(e){$("planStatus").textContent=e.message;}};
+$("applyEditPlan").onclick=()=>{try{if(!stagedPlan)return;if(applyEditPlan(world,history,stagedPlan.plan)){dirty||=stagedPlan.plan.edits.length>0;for(const e of stagedPlan.plan.entities??[])playback.delete(e.id);}stagedPlan=null;$("applyEditPlan").disabled=true;sync();$("planStatus").textContent="Plan applied";}catch(e){if(stagedPlan){stagedPlan=inspectEditPlan(world,stagedPlan.plan);$("applyEditPlan").disabled=!!stagedPlan.conflicts.length;}$("planStatus").textContent=e.message;}};
 $("discardEditPlan").onclick=()=>{planRequest++;stagedPlan=null;$("applyEditPlan").disabled=true;$("planStatus").textContent="Plan discarded";};
 const shortcuts=new Set(["q","e","w","a","s","d","z","x"]);
 function editableTarget(t){return t?.isContentEditable||["INPUT","SELECT","TEXTAREA"].includes(t?.tagName);}
@@ -743,6 +755,23 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
     sprites.push({image:r.image,revision:r.revision,emissiveMask:r.emissiveMask,emissive:e.light?.emissive??0,points:flex(billboard(p,renderYaw,s.width,s.height,r.pivot,alignment),p,s.height,contacts.length?contactResponse(interactions,entityTarget(e)):null,e.id,wind,e.visual.wind)});objectInstances++;
     if(e.anchor==="surface"&&Math.abs(e.offset_ft[2])<1e-8)shadowObjects.push({address,point:p,height:s.height,radius:Math.min(grid.horizontal_ft/2,s.width*.45),opacity:.48});
   }
+  const editPreview=drag?.brush&&drag.transform?drag.edits:stagedPlan?.plan.edits??[];
+  const conflictKeys=new Set((stagedPlan?.conflicts??[]).filter(c=>c.address).map(c=>c.address.join(",")));
+  const objectPreview=drag?.brush?drag.objects:stagedPlan?.plan.entities??[];
+  const pendingCells=new Map(editPreview.map(e=>[e.address.join(","),e.value]));
+  // Render a bounded preview of proposed entities, not a second scene or
+  // a mutation. Unsupported, offscreen and excess records retain their markers.
+  const ghostSprites=[];let previewOmitted=0,previewAttempts=0;
+  if(!$("transitionDebug").checked)for(const change of objectPreview){
+    const e=change.value;if(!e||!displayedAddress(e.address))continue;
+    const h=anchorHeight(e,pendingCells.get(e.address.join(","))??world.get(...e.address),grid);if(h===undefined)continue;
+    const o=physicalPosition(...e.address,grid),p=[o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h],screen=view(p),margin=scale*e.visual.height_ft*4;
+    if(screen.x<-margin||screen.x>canvas.width+margin||screen.y<-margin||screen.y>canvas.height+margin)continue;
+    if(previewAttempts>=64){previewOmitted++;continue;}previewAttempts++;
+    const binding=directionalBinding(e.visual,yaw,e.orientation_steps??0),entry=requestSprite(binding),s=entry.sprite;if(!s)continue;
+    const points=billboard(p,renderYaw,s.width,s.height,s.pivot,alignment);
+    ghostSprites.push({image:s.image,revision:s.revision,points,previewOpacity:.48,previewColor:!drag?.brush&&conflictKeys.has(e.address.join(","))?[.95,.35,.3]:[.3,.9,.95]});
+  }
   const weatherSprites=[];
   if($("weatherVisual").checked&&cutLevel()===null){
     // Cached by terrain/visibility identity and environmental inputs, not visual time.
@@ -764,7 +793,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const pointShadow=$("pointOcclusion").checked&&cutLevel()===null&&local.lights.length?pointShadowCache.prepare(world,local.lights):{plan:null,diagnostics:{lights:0,rays:0,unknown:0,budget:0,omitted:local.lights.length,cache_hit:false}};
   const walls=[];for(const [a,b] of selectionEdges(world,selection.filter(displayedAddress),grid)){const up=p=>[p[0],p[1],p[2]+grid.vertical_ft*.18],lo=p=>[p[0],p[1],p[2]+.015];walls.push({points:[lo(a),lo(b),up(b)],fade:[0,0,1]},{points:[lo(a),up(b),up(a)],fade:[0,1,1]});}
   const shadowMS=performance.now()-shadowStart,renderStart=performance.now();
-  gpu.render(visible,view,{projectionKey:ckey,cacheStaticTerrain:lastRenderCameraKey===null||lastRenderCameraKey===ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,pointShadow:pointShadow.plan,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
+  gpu.render(visible,view,{projectionKey:ckey,cacheStaticTerrain:lastRenderCameraKey===null||lastRenderCameraKey===ckey,selectionWalls:walls,water,visualTime:clock.visual,pointLights:local.lights,pointShadow:pointShadow.plan,previews:ghostSprites,selected,pattern:$("pattern").checked,sprites:weatherSprites.length?[...sprites,...weatherSprites]:sprites,transitions:catalog.transitions,debug:$("transitionDebug").checked,style:styled?art.profile:null,lighting:light,softSprites:$("softSprites").checked,shadows:[...shadows,...sun.faces]});
   lastRenderCameraKey=ckey;const renderMS=performance.now()-renderStart;
   if($("wire").checked){
     if(!wireCells.has(selected[2]))wireCells.set(selected[2],domain.filter(a=>a[2]===selected[2]&&!hasVolume(world.get(...a).shape)));
@@ -785,11 +814,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
       polygon(v.lower.slice(0,6).map(p=>projectLocal(e.address,p)),null,color);
     }
   }
-  const editPreview=drag?.brush&&drag.transform?drag.edits:stagedPlan?.plan.edits??[];
   for(const a of waypoints){const c=world.get(...a);if(!c||!displayedAddress(a))continue;const p=projectLocal(a,vertices(c.shape,grid).upper[6]);ctx.fillStyle="#ffe29a";ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill();}
-  const conflictKeys=new Set((stagedPlan?.conflicts??[]).filter(c=>c.address).map(c=>c.address.join(",")));
-  const objectPreview=drag?.brush?drag.objects:stagedPlan?.plan.entities??[];
-  const pendingCells=new Map(editPreview.map(e=>[e.address.join(","),e.value]));
   for(const change of objectPreview){const e=change.value??change.expected;if(!e||!displayedAddress(e.address))continue;const h=anchorHeight(e,pendingCells.get(e.address.join(","))??world.get(...e.address),grid);if(h===undefined)continue;const o=physicalPosition(...e.address,grid),p=view([o.x+e.offset_ft[0],o.y+e.offset_ft[1],o.z+h]),color=change.value&&!conflictKeys.has(e.address.join(","))?"#66dfea":"#f08072";ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,9,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.moveTo(p.x-5,p.y);ctx.lineTo(p.x+5,p.y);if(change.value){ctx.moveTo(p.x,p.y-5);ctx.lineTo(p.x,p.y+5);}ctx.stroke();ctx.lineWidth=1;}
   for(const e of editPreview){if(!displayedAddress(e.address))continue;const v=vertices(e.value.shape,grid),blocked=!drag?.brush&&conflictKeys.has(e.address.join(","));polygon(v.upper.slice(0,6).map(p=>projectLocal(e.address,p)),blocked?"rgba(240,100,80,.18)":"rgba(70,220,230,.18)",blocked?"#f08072":"#66dfea");}
   if($("showColliders").checked)try{for(const c of objectVolumes(world)){
@@ -815,7 +840,7 @@ function frame(ms){const interval=last===undefined?0:ms-last,dt=Math.min(.1,inte
   const gpuStats=gpu.diagnostics(),gpuSamples=gpu.takeTimingSamples();
   profileSamples.add(timing,gpuStats,gpuSamples);captureFrame(ms,timing,gpuStats,gpuSamples);
   if(ms-profileAt>=500){profileAt=ms;profileFrame={...profileSamples.summary(),...gpuStats,...phasePool.diagnostics()};profileSamples=new FrameSamples();$("performanceStatus").textContent=JSON.stringify(profileFrame);}
-  workspace.update({selected,performance:profileFrame,quality});$("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,precipitation_instances:weatherSprites.length,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,point_shadow:pointShadow.diagnostics,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,emissive_mask_instances:maskedObjects,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
+  workspace.update({selected,performance:profileFrame,quality});$("status").textContent=JSON.stringify({grid,selected,selection,performance:profileFrame,face:activeFace(),vertex:activeRef(),handles:handles.map(({layer,index,x,y})=>({layer,index,x,y})),cell:world.get(...selected),world_mode:worldMode,cutaway:cutLevel(),cutaway_center:cutCenter,moving_presentations:playback.size,bent_sprites:bent,wind_bent_sprites:windBent,wind_state_sprites:animatedFoliage,seasonal_sprites:seasonalFoliage,precipitation_instances:weatherSprites.length,selected_climate:climateAt(field,selected),wind_zones:field.zones.length,selected_wind:windAt(field,selected),interaction_events:interactionEvents,interaction_rules:interactions.rules.length,resident_chunks:world.chunkCount,active_chunks:activeChunks,active_cells:domain.length,mesh_cache_entries:meshCache.size,mesh_triangles:faces.length,visible_triangles:visible.length,vegetation_instances:sprites.length-objectInstances-scatterInstances,scatter_instances:scatterInstances,ambient_occlusion_faces:visible.filter(f=>f.occlusion?.some(v=>v>0)).length,directional_shadow_faces:sun.faces.length,shadow_budget_reached:sun.truncated,water_triangles:water.length,water_simulation:field.water_simulation===true,water_report:waterReport,point_lights:local.lights.length,point_lights_omitted:local.omitted,point_shadow:pointShadow.diagnostics,lighting:light,scatter_candidates:scatterPlan.length,scatter_families:styled?art.scatter.size:0,object_instances:objectInstances,emissive_mask_instances:maskedObjects,world_objects:world.entityCount,selected_object_view:(()=>{const e=world.getEntity($("objects").value);return e?directionalBinding(e.visual,yaw,e.orientation_steps??0).asset:null;})(),route_steps:routePreview?.ok?routePreview.path.length-1:null,unresolved_objects:unresolvedObjects,art_style:styled?art.profile.id:null,transitions:$("transitions").checked,transition_triangles:faces.filter(f=>f.attributes&&f.kind==="top").length,builder:{history:history.counts,staged_cells:editPreview.length,staged_objects:objectPreview.length,preview_sprites:ghostSprites.length,preview_omitted:previewOmitted,waypoints:waypoints.length,palette:palette.size,quality},camera:{...camera(),target_yaw:yaw,rotating:!!turn},renderer:"WebGL2",atlas_sprite:!!actor,simulation_seconds:clock.simulation.toFixed(2),visual_seconds:clock.visual.toFixed(2),effect:activeEffects.at(-1)?.instance.behavior??"none",active:activeEffects.length>0,world_effects:world.effects().length,active_effects:activeEffects.length,capture_cells:capture.size},null,2);requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
